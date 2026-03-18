@@ -1,7 +1,39 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
+
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
 export const connectDB = async () => {
-  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/pakhi-tunes';
-  await mongoose.connect(uri);
-  console.log('MongoDB connected');
+  if (mongoose.connection.readyState === 1) return mongoose.connection;
+  if (mongoose.connection.readyState === 2 && cached.promise) {
+    return await cached.promise;
+  }
+  if (cached.promise) {
+    try {
+      const conn = await cached.promise;
+      if (mongoose.connection.readyState === 1) return conn;
+    } catch (e) {
+      cached.promise = null;
+    }
+  }
+  if (cached.conn && mongoose.connection.readyState === 0) cached.conn = null;
+
+  const uri = process.env.MONGODB_URI;
+
+  cached.promise = mongoose
+    .connect(uri, {
+      bufferCommands: false,
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4,
+    })
+    .then((m) => m.connection);
+
+  const conn = await cached.promise;
+  console.log("MongoDB connected");
+  return conn;
 };
