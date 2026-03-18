@@ -15,7 +15,7 @@ export const getUsers = asyncHandler(async (req, res) => {
     User.countDocuments(),
   ]);
 
-  successPaginated(res, users, count, limit, offset);
+  successPaginated(res, users, count, limit, offset, 200, req);
 });
 
 export const getUser = asyncHandler(async (req, res) => {
