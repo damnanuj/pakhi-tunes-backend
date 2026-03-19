@@ -7,6 +7,38 @@ const UA =
 
 const TOP_SONGS_COUNT = 50;
 
+function formatArtist(data) {
+  if (!data) return null;
+
+  const permaUrl = data.urls?.overview ?? data.perma_url ?? '';
+  const encrypted_id = permaUrl?.match(/\/artist\/[^/]+\/([^/?]+)/)?.[1] ?? null;
+
+  const imageArr = data.image ?? [];
+  const images = (Array.isArray(imageArr) ? imageArr : [imageArr])
+    .filter(Boolean)
+    .map((url) => {
+      const u = typeof url === 'string' ? url : '';
+      const q = u.includes('150x150') ? '150x150' : u.includes('50x50') ? '50x50' : '500x500';
+      return { quality: q, url: u };
+    });
+
+  return {
+    id: data.artistId ?? data.id ?? null,
+    encrypted_id,
+    name: data.name ?? data.title?.text ?? null,
+    url: permaUrl || null,
+    image: images,
+    fanCount: Number(data.fan_count) || null,
+    followerCount: Number(data.follower_count) || null,
+    dob: data.dob || null,
+    isVerified: data.isVerified ?? data.is_verified ?? false,
+    dominantLanguage: data.dominantLanguage ?? null,
+    dominantType: data.dominantType ?? null,
+    bio: Array.isArray(data.bio) ? data.bio.map((b) => ({ text: b.text ?? '', title: b.title ?? '' })) : [],
+    wiki: data.wiki || null,
+  };
+}
+
 function buildApiUrl(baseUrl, call, params) {
   const url = new URL(`${baseUrl}/api.php`);
   url.searchParams.set('__call', call);
@@ -53,6 +85,7 @@ async function fetchArtistPageDetails(baseUrl, artistId) {
   });
 
   const songs = data?.topSongs ?? [];
+  const artist = formatArtist(data);
 
   let total = 0;
   try {
@@ -72,6 +105,7 @@ async function fetchArtistPageDetails(baseUrl, artistId) {
   if (!total) total = songs.length;
 
   return {
+    artist,
     songs: Array.isArray(songs) ? songs : [],
     total,
   };
@@ -126,15 +160,16 @@ async function enrichSongsWithDetails(baseUrl, songs) {
 
 export async function scrapeArtistSongs(artistId, limit = 20, offset = 0) {
   const baseUrl = process.env.SCRAPER_SOURCE_BASE_URL;
-  if (!baseUrl || !artistId) return { songs: [], total: 0 };
+  if (!baseUrl || !artistId) return { artist: null, songs: [], total: 0 };
 
   const numericId = await resolveNumericId(baseUrl, String(artistId));
-  if (!numericId) return { songs: [], total: 0 };
+  if (!numericId) return { artist: null, songs: [], total: 0 };
 
   const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
   const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
 
   const artistPage = await fetchArtistPageDetails(baseUrl, numericId);
+  const { artist } = artistPage;
   const topSongs = artistPage.songs;
   const total = artistPage.total;
 
@@ -178,5 +213,5 @@ export async function scrapeArtistSongs(artistId, limit = 20, offset = 0) {
 
   const songs = enriched.map((s) => formatSong(s, baseUrl)).filter(Boolean);
 
-  return { songs, total };
+  return { artist, songs, total };
 }

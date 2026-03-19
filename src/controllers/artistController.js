@@ -22,7 +22,7 @@ export const getArtistSongs = asyncHandler(async (req, res) => {
   const limit = Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_LIMIT);
   const offset = Math.max(0, parseInt(req.query.offset, 10) || DEFAULT_OFFSET);
 
-  const { songs, total } = await scrapeArtistSongs(id, limit, offset);
+  const { artist, songs, total } = await scrapeArtistSongs(id, limit, offset);
 
-  successPaginated(res, songs, total, limit, offset, 200, req);
+  successPaginated(res, songs, total, limit, offset, 200, req, artist ? { artist } : {});
 });

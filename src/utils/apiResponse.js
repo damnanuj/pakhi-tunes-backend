@@ -6,7 +6,7 @@ export const success = (res, data, statusCode = 200) => {
   });
 };
 
-export const successPaginated = (res, results, count, limit, offset, statusCode = 200, req = null) => {
+export const successPaginated = (res, results, count, limit, offset, statusCode = 200, req = null, extra = {}) => {
   const currentPage = limit > 0 ? Math.floor(offset / limit) + 1 : 1;
   const totalPages = limit > 0 ? Math.ceil(count / limit) : 1;
 
@@ -21,6 +21,7 @@ export const successPaginated = (res, results, count, limit, offset, statusCode 
 
   res.status(statusCode).json({
     data: {
+      ...extra,
       count,
       currentPage,
       totalPages,
