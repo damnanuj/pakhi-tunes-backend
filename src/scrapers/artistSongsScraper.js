@@ -71,16 +71,10 @@ async function fetchArtistPageDetails(baseUrl, artistId) {
 
   if (!total) total = songs.length;
 
-  const songList = Array.isArray(songs) ? songs : [];
-
-  // Sort by play count to ensure consistent popularity order across regions
-  songList.sort((a, b) => {
-    const aCount = parseInt(a.play_count, 10) || 0;
-    const bCount = parseInt(b.play_count, 10) || 0;
-    return bCount - aCount;
-  });
-
-  return { songs: songList, total };
+  return {
+    songs: Array.isArray(songs) ? songs : [],
+    total,
+  };
 }
 
 async function fetchArtistMoreSongs(baseUrl, artistId, page = 1) {
@@ -181,13 +175,6 @@ export async function scrapeArtistSongs(artistId, limit = 20, offset = 0) {
   }
 
   const enriched = await enrichSongsWithDetails(baseUrl, rawSongs);
-
-  // Sort by play count after enrichment for accurate ordering
-  enriched.sort((a, b) => {
-    const aCount = parseInt(a.play_count, 10) || 0;
-    const bCount = parseInt(b.play_count, 10) || 0;
-    return bCount - aCount;
-  });
 
   const songs = enriched.map((s) => formatSong(s, baseUrl)).filter(Boolean);
 
