@@ -94,11 +94,11 @@ export function formatSong(song, baseUrl = '') {
   const duration = typeof song.duration === 'number' ? song.duration : more.duration ? parseInt(more.duration, 10) : null;
 
   const fullUrl = typeof permaUrl === 'string' && permaUrl.startsWith('http') ? permaUrl : resolveUrl(permaUrl, baseUrl);
-  const token = fullUrl?.match(/\/song\/[^/]+\/([^/?]+)/)?.[1] ?? null;
+  const encrypted_id = fullUrl?.match(/\/song\/[^/]+\/([^/?]+)/)?.[1] ?? null;
 
   return {
     id: song.id,
-    token,
+    encrypted_id,
     name,
     type: song.type ?? 'song',
     year: song.year ?? null,
