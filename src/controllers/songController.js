@@ -1,4 +1,4 @@
-import { fetchSongByToken } from '../scrapers/songPageScraper.js';
+import { fetchSongByToken } from '../scrapers/songDetailsScraper.js';
 import { success } from '../utils/apiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
