@@ -4,7 +4,6 @@ import { connectDB } from './config/db.js';
 
 const PORT = process.env.PORT || 8000;
 
-// For local development only - Vercel runs as serverless
 if (process.env.NODE_ENV !== 'production') {
   connectDB()
     .then(() => {

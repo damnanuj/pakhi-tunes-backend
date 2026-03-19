@@ -200,6 +200,7 @@ function mapToArtists(list) {
 
 export async function scrapeTopArtists() {
   const baseUrl = process.env.SCRAPER_SOURCE_BASE_URL;
+  if (!baseUrl) return [];
   const url = `${baseUrl}/top-artists`;
 
   const headers = {
