@@ -76,6 +76,29 @@ function buildPagePath(language) {
   return `/new-releases/${lang}`;
 }
 
+/**
+ * Slugs JioSaavn uses under /new-releases/{slug} (same set as their web app browse).
+ * Pass any of these as the API `language` query param.
+ */
+export const NEW_RELEASE_LANGUAGE_SLUGS = [
+  'hindi',
+  'english',
+  'tamil',
+  'telugu',
+  'punjabi',
+  'marathi',
+  'gujarati',
+  'bengali',
+  'kannada',
+  'bhojpuri',
+  'malayalam',
+  'sanskrit',
+  'haryanvi',
+  'rajasthani',
+  'odia',
+  'assamese',
+];
+
 async function enrichSongsWithDetails(baseUrl, songs) {
   const ids = songs.map((s) => s.id).filter(Boolean);
   if (!ids.length) return songs;
@@ -132,7 +155,11 @@ function mapBrowseListToResults(browseList, baseUrl, rawSongs) {
 export async function scrapeNewReleases(language = '', limit = 20, offset = 0) {
   const baseUrl = process.env.SCRAPER_SOURCE_BASE_URL;
   if (!baseUrl) {
-    return { results: [], total: 0 };
+    return {
+      results: [],
+      total: 0,
+      meta: buildMeta(language, '', {}),
+    };
   }
 
   const path = buildPagePath(language);
@@ -162,5 +189,18 @@ export async function scrapeNewReleases(language = '', limit = 20, offset = 0) {
   const total = allResults.length;
   const results = allResults.slice(safeOffset, safeOffset + safeLimit);
 
-  return { results, total };
+  const meta = buildMeta(language, pageUrl, browse);
+
+  return { results, total, meta };
+}
+
+function buildMeta(requestedLanguage, pageUrl, browse) {
+  const slug = normalizeLanguage(requestedLanguage);
+  return {
+    language: slug || null,
+    pageUrl,
+    supportedLanguages: NEW_RELEASE_LANGUAGE_SLUGS,
+    browseLanguage: browse.current_language || null,
+    currentPageKey: browse.current_page ?? null,
+  };
 }

@@ -10,7 +10,7 @@ export const getNewReleases = asyncHandler(async (req, res) => {
   const offset = Math.max(0, parseInt(req.query.offset, 10) || DEFAULT_OFFSET);
   const language = typeof req.query.language === 'string' ? req.query.language : '';
 
-  const { results, total } = await scrapeNewReleases(language, limit, offset);
+  const { results, total, meta } = await scrapeNewReleases(language, limit, offset);
 
-  successPaginated(res, results, total, limit, offset, 200, req);
+  successPaginated(res, results, total, limit, offset, 200, req, { meta });
 });
