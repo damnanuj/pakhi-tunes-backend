@@ -9,7 +9,6 @@ const router = Router();
 
 router.use(ensureDbConnection);
 
-
 router.get("/", getTopArtists);
 router.get("/:artistId/songs", getArtistSongs);
 router.get("/:encryptedId", getArtistSongs);

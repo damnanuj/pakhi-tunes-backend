@@ -6,6 +6,21 @@ export const success = (res, data, statusCode = 200) => {
   });
 };
 
+function paginationQueryString(req, limit, offset) {
+  const params = new URLSearchParams();
+  if (req?.query && typeof req.query === 'object') {
+    for (const [k, v] of Object.entries(req.query)) {
+      if (k === 'limit' || k === 'offset') continue;
+      if (v === undefined || v === null || v === '') continue;
+      params.set(k, String(v));
+    }
+  }
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  const q = params.toString();
+  return q ? `?${q}` : '';
+}
+
 export const successPaginated = (res, results, count, limit, offset, statusCode = 200, req = null, extra = {}) => {
   const currentPage = limit > 0 ? Math.floor(offset / limit) + 1 : 1;
   const totalPages = limit > 0 ? Math.ceil(count / limit) : 1;
@@ -15,8 +30,10 @@ export const successPaginated = (res, results, count, limit, offset, statusCode 
 
   if (req) {
     const baseUrl = `${req.protocol}://${req.get('host')}${req.baseUrl}${req.path}`;
-    next = currentPage < totalPages ? `${baseUrl}?limit=${limit}&offset=${offset + limit}` : null;
-    previous = currentPage > 1 ? `${baseUrl}?limit=${limit}&offset=${Math.max(0, offset - limit)}` : null;
+    const qsNext = paginationQueryString(req, limit, offset + limit);
+    const qsPrev = paginationQueryString(req, limit, Math.max(0, offset - limit));
+    next = currentPage < totalPages ? `${baseUrl}${qsNext}` : null;
+    previous = currentPage > 1 ? `${baseUrl}${qsPrev}` : null;
   }
 
   res.status(statusCode).json({

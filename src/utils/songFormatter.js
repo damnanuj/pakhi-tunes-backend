@@ -62,7 +62,8 @@ export function formatSong(song, baseUrl = '') {
 
   const more = song.more_info ?? {};
 
-  const name = song.song ?? song.title?.text ?? (typeof song.title === 'string' ? song.title : '') ?? '';
+  let name = song.song ?? song.title?.text ?? (typeof song.title === 'string' ? song.title : '') ?? '';
+  name = name.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
   const albumText = typeof song.album === 'string' ? song.album : song.album?.text ?? more.album ?? '';
   const albumAction = song.album?.action ?? more.album_url ?? '';
@@ -117,5 +118,25 @@ export function formatSong(song, baseUrl = '') {
     artists: { primary, featured, all },
     image: createImageLinks(song.image),
     downloadUrl: createDownloadLinks(encryptedUrl),
+  };
+}
+
+/** Album row from browse pages (e.g. new-releases) — minimal fields, no track list. */
+export function formatBrowseAlbum(item, baseUrl = '') {
+  if (!item?.id) return null;
+  if (item.type && item.type !== 'album') return null;
+
+  const fullUrl = typeof item.perma_url === 'string' && item.perma_url.startsWith('http')
+    ? item.perma_url
+    : resolveUrl(item.perma_url, baseUrl);
+  const encrypted_id = fullUrl?.match(/\/album\/[^/]+\/([^/?]+)/)?.[1] ?? null;
+
+  return {
+    id: item.id?.toString() ?? '',
+    encrypted_id,
+    name: item.title?.text ?? (typeof item.title === 'string' ? item.title : '') ?? '',
+    type: 'album',
+    url: fullUrl,
+    image: createImageLinks(item.image),
   };
 }
