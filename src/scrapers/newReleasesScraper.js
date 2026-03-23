@@ -77,7 +77,7 @@ function buildPagePath(language) {
 }
 
 /**
- * Slugs JioSaavn uses under /new-releases/{slug} (same set as their web app browse).
+ * Slugs for language-specific new-release paths: /new-releases/{slug}.
  * Pass any of these as the API `language` query param.
  */
 export const NEW_RELEASE_LANGUAGE_SLUGS = [
