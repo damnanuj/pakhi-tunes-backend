@@ -140,3 +140,38 @@ export function formatBrowseAlbum(item, baseUrl = '') {
     image: createImageLinks(item.image),
   };
 }
+
+/** Full album payload from album detail API (e.g. content.getAlbumDetails / webapi album). */
+export function formatAlbumDetail(album, baseUrl = '') {
+  if (!album?.id) return null;
+
+  const more = album.more_info ?? {};
+  const permaUrl = album.perma_url;
+  const fullUrl =
+    typeof permaUrl === 'string' && permaUrl.startsWith('http') ? permaUrl : resolveUrl(permaUrl, baseUrl);
+  const encrypted_id = fullUrl?.match(/\/album\/[^/]+\/([^/?]+)/)?.[1] ?? null;
+
+  const titleText = album.title?.text ?? (typeof album.title === 'string' ? album.title : '') ?? '';
+  const artistMap = more.artistMap ?? {};
+  const primary = (artistMap.primary_artists ?? []).map((a) => mapArtist(a, baseUrl)).filter(Boolean);
+  const featured = (artistMap.featured_artists ?? []).map((a) => mapArtist(a, baseUrl)).filter(Boolean);
+  const all = (artistMap.artists ?? []).map((a) => mapArtist(a, baseUrl)).filter(Boolean);
+
+  return {
+    id: String(album.id),
+    encrypted_id,
+    name: titleText,
+    subtitle: album.subtitle ?? null,
+    description: album.header_desc ?? null,
+    type: album.type ?? 'album',
+    year: album.year != null && album.year !== '' ? String(album.year) : null,
+    language: album.language ?? null,
+    explicitContent: album.explicit_content === '1',
+    playCount: album.play_count != null && album.play_count !== '' ? Number(album.play_count) : null,
+    songCount: more.song_count != null ? Number(more.song_count) : null,
+    url: fullUrl,
+    copyright: more.copyright_text ?? null,
+    image: createImageLinks(album.image),
+    artists: { primary, featured, all },
+  };
+}

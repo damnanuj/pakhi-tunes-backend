@@ -1,0 +1,10 @@
+---
+description: Keep scraper/source references brand-neutral in code and docs
+alwaysApply: true
+---
+
+# Neutral references to the scraper source
+
+- Do **not** name the upstream music streaming service, its parent company, or related product names in comments, strings, README, env examples, commit messages, or user-facing copy.
+- Prefer generic wording: **source site**, **upstream**, **catalog API**, **SCRAPER_SOURCE_BASE_URL**, **scraper source**.
+- Technical API parameters required for compatibility (e.g. query keys, client context tokens) may stay as-is when they are not readable brand names.

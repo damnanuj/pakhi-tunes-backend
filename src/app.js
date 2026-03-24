@@ -6,6 +6,7 @@ import userRoutes from './routes/userRoutes.js';
 import artistRoutes from './routes/artistRoutes.js';
 import songRoutes from './routes/songRoutes.js';
 import newReleasesRoutes from './routes/newReleasesRoutes.js';
+import albumRoutes from './routes/albumRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
@@ -21,6 +22,7 @@ app.use('/users', userRoutes);
 app.use('/top-artists', artistRoutes);
 app.use('/songs', songRoutes);
 app.use('/new-releases', newReleasesRoutes);
+app.use('/albums', albumRoutes);
 
 app.use(errorHandler);
 
