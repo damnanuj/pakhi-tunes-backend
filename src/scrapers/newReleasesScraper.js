@@ -70,6 +70,16 @@ function normalizeLanguage(language) {
   return raw.replace(/[^a-z0-9-]/g, '');
 }
 
+/** @returns {'' | 'song' | 'album' | null} empty string = no filter; null = invalid */
+export function normalizeReleaseType(type) {
+  const raw = String(type ?? '')
+    .trim()
+    .toLowerCase();
+  if (!raw) return '';
+  if (raw === 'song' || raw === 'album') return raw;
+  return null;
+}
+
 function buildPagePath(language) {
   const lang = normalizeLanguage(language);
   if (!lang) return '/new-releases';
@@ -152,7 +162,7 @@ function mapBrowseListToResults(browseList, baseUrl, rawSongs) {
  * per request; extra rows load in the browser via internal calls we cannot mirror reliably, so
  * pagination applies to that batch only.
  */
-export async function scrapeNewReleases(language = '', limit = 20, offset = 0) {
+export async function scrapeNewReleases(language = '', limit = 20, offset = 0, type = '') {
   const baseUrl = process.env.SCRAPER_SOURCE_BASE_URL;
   if (!baseUrl) {
     return {
@@ -185,19 +195,24 @@ export async function scrapeNewReleases(language = '', limit = 20, offset = 0) {
   const songRows = browseList.filter((i) => i?.type === 'song');
   const enriched = await enrichSongsWithDetails(baseUrl, songRows);
   const allResults = mapBrowseListToResults(browseList, baseUrl, enriched);
+  const releaseType = normalizeReleaseType(type);
+  const filteredResults = releaseType
+    ? allResults.filter((item) => item.type === releaseType)
+    : allResults;
 
-  const total = allResults.length;
-  const results = allResults.slice(safeOffset, safeOffset + safeLimit);
+  const total = filteredResults.length;
+  const results = filteredResults.slice(safeOffset, safeOffset + safeLimit);
 
-  const meta = buildMeta(language, pageUrl, browse);
+  const meta = buildMeta(language, pageUrl, browse, releaseType);
 
   return { results, total, meta };
 }
 
-function buildMeta(requestedLanguage, pageUrl, browse) {
+function buildMeta(requestedLanguage, pageUrl, browse, type = '') {
   const slug = normalizeLanguage(requestedLanguage);
   return {
     language: slug || null,
+    type: type || null,
     pageUrl,
     supportedLanguages: NEW_RELEASE_LANGUAGE_SLUGS,
     browseLanguage: browse.current_language || null,
