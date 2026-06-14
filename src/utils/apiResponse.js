@@ -32,8 +32,13 @@ export const successPaginated = (res, results, count, limit, offset, statusCode 
     const baseUrl = `${req.protocol}://${req.get('host')}${req.baseUrl}${req.path}`;
     const qsNext = paginationQueryString(req, limit, offset + limit);
     const qsPrev = paginationQueryString(req, limit, Math.max(0, offset - limit));
-    next = currentPage < totalPages ? `${baseUrl}${qsNext}` : null;
+    next =
+      currentPage < totalPages && results.length > 0
+        ? `${baseUrl}${qsNext}`
+        : null;
     previous = currentPage > 1 ? `${baseUrl}${qsPrev}` : null;
+  } else if (!results.length) {
+    next = null;
   }
 
   res.status(statusCode).json({

@@ -6,6 +6,7 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const TOP_SONGS_COUNT = 50;
+const MAX_MORE_PAGES = 120;
 
 function formatArtist(data) {
   if (!data) return null;
@@ -158,6 +159,57 @@ async function enrichSongsWithDetails(baseUrl, songs) {
   }
 }
 
+/**
+ * Build a deduped global song catalog: top songs first, then unique songs
+ * from paginated getArtistMoreSong until `targetCount` items are collected.
+ */
+async function buildArtistSongCatalog(baseUrl, numericId, topSongs, targetCount) {
+  const catalog = [];
+  const seen = new Set();
+
+  for (const song of topSongs) {
+    if (!song?.id || seen.has(song.id)) continue;
+    seen.add(song.id);
+    catalog.push(song);
+    if (catalog.length >= targetCount) return catalog;
+  }
+
+  let page = 1;
+  while (catalog.length < targetCount && page <= MAX_MORE_PAGES) {
+    let batch;
+    try {
+      batch = await fetchArtistMoreSongs(baseUrl, numericId, page);
+    } catch {
+      break;
+    }
+
+    const songs = batch.songs ?? [];
+    if (!songs.length) break;
+
+    for (const song of songs) {
+      if (!song?.id || seen.has(song.id)) continue;
+      seen.add(song.id);
+      catalog.push(song);
+      if (catalog.length >= targetCount) break;
+    }
+
+    page += 1;
+  }
+
+  return catalog;
+}
+
+async function sliceArtistSongs(baseUrl, numericId, topSongs, offset, limit) {
+  const targetCount = offset + limit;
+  const catalog = await buildArtistSongCatalog(
+    baseUrl,
+    numericId,
+    topSongs,
+    targetCount
+  );
+  return catalog.slice(offset, offset + limit);
+}
+
 export async function scrapeArtistSongs(artistId, limit = 20, offset = 0) {
   const baseUrl = process.env.SCRAPER_SOURCE_BASE_URL;
   if (!baseUrl || !artistId) return { artist: null, songs: [], total: 0 };
@@ -173,44 +225,15 @@ export async function scrapeArtistSongs(artistId, limit = 20, offset = 0) {
   const topSongs = artistPage.songs;
   const total = artistPage.total;
 
-  let rawSongs;
-
-  if (safeOffset < topSongs.length) {
-    const fromTop = topSongs.slice(safeOffset, safeOffset + safeLimit);
-    const remaining = safeLimit - fromTop.length;
-
-    if (remaining <= 0) {
-      rawSongs = fromTop;
-    } else {
-      const morePage = Math.ceil(remaining / TOP_SONGS_COUNT);
-      let moreSongs = [];
-      for (let p = 1; p <= morePage; p++) {
-        try {
-          const result = await fetchArtistMoreSongs(baseUrl, numericId, p);
-          moreSongs.push(...result.songs);
-        } catch {}
-      }
-      rawSongs = [...fromTop, ...moreSongs.slice(0, remaining)];
-    }
-  } else {
-    const extraOffset = safeOffset - topSongs.length;
-    const startPage = Math.floor(extraOffset / TOP_SONGS_COUNT) + 1;
-    const endPage = Math.ceil((extraOffset + safeLimit) / TOP_SONGS_COUNT);
-
-    let moreSongs = [];
-    for (let p = startPage; p <= endPage; p++) {
-      try {
-        const result = await fetchArtistMoreSongs(baseUrl, numericId, p);
-        moreSongs.push(...result.songs);
-      } catch {}
-    }
-
-    const localOffset = extraOffset - (startPage - 1) * TOP_SONGS_COUNT;
-    rawSongs = moreSongs.slice(localOffset, localOffset + safeLimit);
-  }
+  const rawSongs = await sliceArtistSongs(
+    baseUrl,
+    numericId,
+    topSongs,
+    safeOffset,
+    safeLimit
+  );
 
   const enriched = await enrichSongsWithDetails(baseUrl, rawSongs);
-
   const songs = enriched.map((s) => formatSong(s, baseUrl)).filter(Boolean);
 
   return { artist, songs, total };
