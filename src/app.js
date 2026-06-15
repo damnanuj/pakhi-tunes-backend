@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import userRoutes from './routes/userRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import favoritesRoutes from './routes/favoritesRoutes.js';
 import artistRoutes from './routes/artistRoutes.js';
 import songRoutes from './routes/songRoutes.js';
 import newReleasesRoutes from './routes/newReleasesRoutes.js';
@@ -18,6 +20,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.use('/auth', authRoutes);
+app.use('/favorites', favoritesRoutes);
 app.use('/users', userRoutes);
 app.use('/top-artists', artistRoutes);
 app.use('/songs', songRoutes);

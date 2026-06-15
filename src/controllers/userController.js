@@ -25,7 +25,9 @@ export const getUser = asyncHandler(async (req, res) => {
 });
 
 export const createUser = asyncHandler(async (req, res) => {
-  const { name, email } = req.body;
-  const user = await User.create({ name, email });
-  success(res, user, 201);
+  const { name, email, password } = req.body;
+  if (!password) throw new AppError('Password is required', 400);
+  const passwordHash = await User.hashPassword(password);
+  const user = await User.create({ name, email, passwordHash });
+  success(res, user.toSafeObject(), 201);
 });
