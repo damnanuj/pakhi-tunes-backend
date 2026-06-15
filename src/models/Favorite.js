@@ -13,8 +13,6 @@ const favoriteSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     artist: { type: String, required: true, trim: true },
     artworkUrl: { type: String, default: '' },
-    durationSec: { type: Number, default: 0 },
-    uri: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -29,8 +27,6 @@ favoriteSchema.methods.toSafeObject = function toSafeObject() {
     title: this.title,
     artist: this.artist,
     artworkUrl: this.artworkUrl,
-    durationSec: this.durationSec,
-    uri: this.uri,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

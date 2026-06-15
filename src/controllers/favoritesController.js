@@ -22,11 +22,6 @@ function validateSongPayload(body) {
     title: title.trim(),
     artist: artist.trim(),
     artworkUrl: typeof body.artworkUrl === 'string' ? body.artworkUrl : '',
-    durationSec:
-      typeof body.durationSec === 'number' && body.durationSec >= 0
-        ? body.durationSec
-        : 0,
-    uri: typeof body.uri === 'string' ? body.uri : '',
     encryptedId:
       typeof body.encryptedId === 'string'
         ? body.encryptedId.trim()
