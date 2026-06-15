@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getFavorites,
   addFavorite,
+  bulkAddFavorites,
   removeFavorite,
   getFavoriteStatus,
 } from '../controllers/favoritesController.js';
@@ -15,6 +16,7 @@ router.use(auth);
 
 router.get('/', getFavorites);
 router.post('/', addFavorite);
+router.post('/bulk', bulkAddFavorites);
 router.get('/:songId/status', getFavoriteStatus);
 router.delete('/:songId', removeFavorite);
 

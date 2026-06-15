@@ -58,6 +58,49 @@ export const getFavorites = asyncHandler(async (req, res) => {
   );
 });
 
+const MAX_BULK_FAVORITES = 100;
+
+export const bulkAddFavorites = asyncHandler(async (req, res) => {
+  const { songs } = req.body;
+
+  if (!Array.isArray(songs) || songs.length === 0) {
+    throw new AppError('songs array is required', 400);
+  }
+
+  if (songs.length > MAX_BULK_FAVORITES) {
+    throw new AppError(`Maximum ${MAX_BULK_FAVORITES} songs per bulk request`, 400);
+  }
+
+  const payloads = songs.map((song) => validateSongPayload(song));
+  const userId = req.user.id;
+  const songIds = payloads.map((payload) => payload.songId);
+
+  const existing = await Favorite.find({ userId, songId: { $in: songIds } });
+  const existingIds = new Set(existing.map((favorite) => favorite.songId));
+
+  const toCreate = payloads.filter((payload) => !existingIds.has(payload.songId));
+
+  let created = [];
+  if (toCreate.length > 0) {
+    created = await Favorite.insertMany(
+      toCreate.map((payload) => ({ userId, ...payload })),
+      { ordered: false }
+    );
+  }
+
+  const favorites = [...existing, ...created].map((favorite) =>
+    typeof favorite.toSafeObject === 'function'
+      ? favorite.toSafeObject()
+      : favorite
+  );
+
+  success(res, {
+    added: created.length,
+    skipped: existing.length,
+    favorites,
+  });
+});
+
 export const addFavorite = asyncHandler(async (req, res) => {
   const payload = validateSongPayload(req.body);
 
