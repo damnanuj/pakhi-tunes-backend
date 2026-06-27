@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
+    avatar: { type: String, default: null },
+    discoverable: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -23,6 +25,8 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
+    avatar: this.avatar ?? null,
+    discoverable: Boolean(this.discoverable),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
