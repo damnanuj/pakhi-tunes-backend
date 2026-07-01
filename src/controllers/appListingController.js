@@ -94,3 +94,22 @@ export const createReview = asyncHandler(async (req, res) => {
   const review = await AppReview.create(payload);
   success(res, review.toPublicObject(), 201);
 });
+
+export const incrementDownloadCount = asyncHandler(async (req, res) => {
+  const slug = req.params.slug?.trim();
+  if (!slug) {
+    throw new AppError('slug is required', 400);
+  }
+
+  const listing = await AppListing.findOneAndUpdate(
+    { slug },
+    { $inc: { downloadCount: 1 } },
+    { new: true }
+  );
+
+  if (!listing) {
+    throw new AppError('app not found', 404);
+  }
+
+  success(res, { slug: listing.slug, downloadCount: listing.downloadCount });
+});

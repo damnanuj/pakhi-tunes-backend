@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { createReview, getAppDetails } from '../controllers/appListingController.js';
+import { createReview, getAppDetails, incrementDownloadCount } from '../controllers/appListingController.js';
 import { ensureDbConnection } from '../middlewares/ensureDbConnection.js';
 
 const router = Router();
 
 router.use(ensureDbConnection);
 
-router.get('/:slug', getAppDetails);
+router.post('/:slug/downloads', incrementDownloadCount);
 router.post('/:slug/reviews', createReview);
+router.get('/:slug', getAppDetails);
 
 export default router;
