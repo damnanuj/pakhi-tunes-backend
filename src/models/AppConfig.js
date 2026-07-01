@@ -18,6 +18,15 @@ const appConfigSchema = new mongoose.Schema(
       default:
         'This version of Pakhi Tunes is no longer supported. Please update to continue using the app.',
     },
+    releaseSections: {
+      type: [
+        {
+          title: { type: String, trim: true, default: '' },
+          items: [{ type: String, trim: true }],
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );
