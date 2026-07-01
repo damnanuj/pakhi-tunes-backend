@@ -6,9 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon",
-    "seed:app-config": "node scripts/seedAppConfig.js",
-    "seed:app-config:demo": "node scripts/seedAppConfig.js --demo"
+    "dev": "nodemon"
   },
   "keywords": [],
   "author": "",
