@@ -14,7 +14,9 @@ export function getIo() {
   return io;
 }
 
-if (process.env.NODE_ENV !== 'production') {
+const isVercel = process.env.VERCEL === '1';
+
+if (!isVercel) {
   connectDB()
     .then(() => {
       httpServer = createServer(app);
@@ -25,12 +27,13 @@ if (process.env.NODE_ENV !== 'production') {
       registerSessionSocket(io);
 
       httpServer.listen(PORT, () => {
-        console.log(`Server running at http://localhost:${PORT}`);
+        console.log(`Server running on port ${PORT}`);
         console.log(`Socket.IO ready on ws://localhost:${PORT}`);
       });
     })
     .catch((error) => {
       console.error('Failed to connect to MongoDB:', error);
+      process.exit(1);
     });
 }
 
