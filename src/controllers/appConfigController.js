@@ -1,6 +1,19 @@
 import AppConfig from '../models/AppConfig.js';
 import { success } from '../utils/apiResponse.js';
+import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+
+const PATCHABLE_FIELDS = new Set([
+  'updateAvailable',
+  'forceUpdate',
+  'latestVersion',
+  'downloadUrl',
+  'updateTitle',
+  'updateMessage',
+  'forceUpdateTitle',
+  'forceUpdateMessage',
+  'releaseSections',
+]);
 
 export const APP_CONFIG_DEFAULTS = {
   updateAvailable: false,
@@ -62,7 +75,73 @@ export async function ensureAppConfigDoc() {
   return doc;
 }
 
+function validatePatchBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new AppError('Request body must be a JSON object', 400);
+  }
+
+  const unknownKeys = Object.keys(body).filter((key) => !PATCHABLE_FIELDS.has(key));
+  if (unknownKeys.length > 0) {
+    throw new AppError(`Unknown fields: ${unknownKeys.join(', ')}`, 400);
+  }
+
+  const updates = {};
+
+  if ('updateAvailable' in body) {
+    if (typeof body.updateAvailable !== 'boolean') {
+      throw new AppError('updateAvailable must be a boolean', 400);
+    }
+    updates.updateAvailable = body.updateAvailable;
+  }
+
+  if ('forceUpdate' in body) {
+    if (typeof body.forceUpdate !== 'boolean') {
+      throw new AppError('forceUpdate must be a boolean', 400);
+    }
+    updates.forceUpdate = body.forceUpdate;
+  }
+
+  for (const key of [
+    'latestVersion',
+    'downloadUrl',
+    'updateTitle',
+    'updateMessage',
+    'forceUpdateTitle',
+    'forceUpdateMessage',
+  ]) {
+    if (key in body) {
+      if (typeof body[key] !== 'string') {
+        throw new AppError(`${key} must be a string`, 400);
+      }
+      updates[key] = body[key];
+    }
+  }
+
+  if ('releaseSections' in body) {
+    if (!Array.isArray(body.releaseSections)) {
+      throw new AppError('releaseSections must be an array', 400);
+    }
+    updates.releaseSections = body.releaseSections;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    throw new AppError('At least one field is required', 400);
+  }
+
+  return updates;
+}
+
 export const getAppConfig = asyncHandler(async (req, res) => {
   const doc = await ensureAppConfigDoc();
+  success(res, toPublicConfig(doc));
+});
+
+export const updateAppConfig = asyncHandler(async (req, res) => {
+  const updates = validatePatchBody(req.body);
+  const doc = await ensureAppConfigDoc();
+
+  Object.assign(doc, updates);
+  await doc.save();
+
   success(res, toPublicConfig(doc));
 });

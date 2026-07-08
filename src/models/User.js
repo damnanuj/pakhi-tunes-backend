@@ -8,6 +8,11 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true, select: false },
     avatar: { type: String, default: null },
     discoverable: { type: Boolean, default: false },
+    role: {
+      type: String,
+      enum: ['user', 'admin'],
+      default: 'user',
+    },
   },
   { timestamps: true }
 );
@@ -27,6 +32,8 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     email: this.email,
     avatar: this.avatar ?? null,
     discoverable: Boolean(this.discoverable),
+    role: this.role ?? 'user',
+    isAdmin: this.role === 'admin',
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

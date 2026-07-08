@@ -17,6 +17,11 @@
       "type": "string"
     },
     {
+      "key": "authToken",
+      "value": "REPLACE_WITH_JWT_FROM_AUTH_LOGIN",
+      "type": "string"
+    },
+    {
       "key": "songToken",
       "value": "REPLACE_WITH_SONG_ID_TOKEN",
       "type": "string"
@@ -72,41 +77,55 @@
       "name": "Users",
       "item": [
         {
-          "name": "List users",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/users?limit=10&offset=0",
-            "description": "Paginated user list. Requires MongoDB (see ensureDbConnection). Query: limit, offset."
-          },
-          "response": []
-        },
-        {
           "name": "Get user by ID",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
             "url": "{{baseUrl}}/users/{{userId}}",
-            "description": "Fetch a single user by MongoDB ObjectId."
+            "description": "Fetch your own profile. Requires JWT; userId must match the authenticated user."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "App Config",
+      "item": [
+        {
+          "name": "Get app config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/app-config",
+            "description": "Public read for update dialog flags, version, and release notes."
           },
           "response": []
         },
         {
-          "name": "Create user",
+          "name": "Update app config",
           "request": {
-            "method": "POST",
+            "method": "PATCH",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Example User\",\n  \"email\": \"user@example.com\"\n}"
+              "raw": "{\n  \"updateAvailable\": true,\n  \"forceUpdate\": false,\n  \"latestVersion\": \"1.1.0\",\n  \"downloadUrl\": \"https://example.com/download\",\n  \"updateTitle\": \"Update Available\",\n  \"updateMessage\": \"A new version is available.\",\n  \"releaseSections\": [\n    {\n      \"title\": \"What's new\",\n      \"items\": [\"Bug fixes\", \"Performance improvements\"]\n    }\n  ]\n}"
             },
-            "url": "{{baseUrl}}/users",
-            "description": "Create a user. Body: `name`, `email`."
+            "url": "{{baseUrl}}/app-config",
+            "description": "Admin-only partial update. Requires JWT for a user with role: admin (set in MongoDB). Re-login after promoting."
           },
           "response": []
         }

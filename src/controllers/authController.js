@@ -39,6 +39,7 @@ function issueAuthResponse(res, user, statusCode = 200) {
     id: user._id.toString(),
     email: user.email,
     name: user.name,
+    role: user.role ?? 'user',
   });
   success(res, { user: user.toSafeObject(), token }, statusCode);
 }
@@ -54,7 +55,7 @@ export const register = asyncHandler(async (req, res) => {
   }
 
   const passwordHash = await User.hashPassword(password);
-  const user = await User.create({ name, email, passwordHash });
+  const user = await User.create({ name, email, passwordHash, role: 'user' });
   issueAuthResponse(res, user, 201);
 });
 
