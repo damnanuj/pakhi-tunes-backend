@@ -13,6 +13,7 @@ import albumRoutes from './routes/albumRoutes.js';
 import genreRoutes from './routes/genreRoutes.js';
 import sessionRoutes from './routes/sessionRoutes.js';
 import appConfigRoutes from './routes/appConfigRoutes.js';
+import appReleaseRoutes from './routes/appReleaseRoutes.js';
 import appRoutes from './routes/appRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
@@ -36,6 +37,7 @@ app.use('/albums', albumRoutes);
 app.use('/genres', genreRoutes);
 app.use('/sessions', sessionRoutes);
 app.use('/app-config', appConfigRoutes);
+app.use('/app-releases', appReleaseRoutes);
 app.use('/apps', appRoutes);
 
 app.use(errorHandler);

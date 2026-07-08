@@ -52,8 +52,8 @@
       "type": "string"
     },
     {
-      "key": "albumEncryptedId",
-      "value": "REPLACE_WITH_ENCRYPTED_ID",
+      "key": "releaseId",
+      "value": "REPLACE_WITH_RELEASE_OBJECT_ID",
       "type": "string"
     }
   ],
@@ -126,6 +126,147 @@
             },
             "url": "{{baseUrl}}/app-config",
             "description": "Admin-only partial update. Requires JWT for a user with role: admin (set in MongoDB). Re-login after promoting."
+          },
+          "response": []
+        },
+        {
+          "name": "Get app config (admin manage)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-config/manage",
+            "description": "Admin-only full config with both title/message pairs and exists flag."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete app config",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-config",
+            "description": "Admin-only. Deletes the live singleton config document."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "App Releases",
+      "item": [
+        {
+          "name": "List app releases",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-releases",
+            "description": "Admin-only version history. Bootstraps from live config when empty."
+          },
+          "response": []
+        },
+        {
+          "name": "Get app release",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-releases/{{releaseId}}",
+            "description": "Admin-only single release by id."
+          },
+          "response": []
+        },
+        {
+          "name": "Publish new app release",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"1.1.0\",\n  \"downloadUrl\": \"https://example.com/download\",\n  \"updateTitle\": \"Update Available\",\n  \"updateMessage\": \"A new version is available.\",\n  \"forceUpdateTitle\": \"Update Required\",\n  \"forceUpdateMessage\": \"Please update to continue.\",\n  \"releaseSections\": [\n    {\n      \"title\": \"What's new\",\n      \"items\": [\"New feature\"]\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/app-releases",
+            "description": "Admin-only. Archives current live config and publishes a new version with toggles off."
+          },
+          "response": []
+        },
+        {
+          "name": "Update app release",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"releaseSections\": [\n    {\n      \"title\": \"Bug fixes\",\n      \"items\": [\"Fixed crash on launch\"]\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/app-releases/{{releaseId}}",
+            "description": "Admin-only. Cannot edit the live release."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete app release",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-releases/{{releaseId}}",
+            "description": "Admin-only. Cannot delete the live release."
+          },
+          "response": []
+        },
+        {
+          "name": "Publish existing release as live",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/app-releases/{{releaseId}}/publish",
+            "description": "Admin-only. Restores a historical release into live AppConfig."
           },
           "response": []
         }
