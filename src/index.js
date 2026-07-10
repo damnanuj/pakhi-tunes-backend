@@ -1,9 +1,12 @@
 import 'dotenv/config';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import cron from 'node-cron';
 import app from './app.js';
 import { connectDB } from './config/db.js';
 import { registerSessionSocket } from './sockets/sessionSocket.js';
+import { cleanupInactiveGuests } from './jobs/guestCleanup.js';
+import { runPresenceMinuteJobs } from './jobs/presenceJobs.js';
 
 const PORT = process.env.PORT || 8000;
 
@@ -29,6 +32,26 @@ if (!isVercel) {
       httpServer.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
         console.log(`Socket.IO ready on ws://localhost:${PORT}`);
+
+        cron.schedule('0 2 * * *', async () => {
+          try {
+            const result = await cleanupInactiveGuests();
+            console.log('[guestCleanup] Marked inactive guests:', result);
+          } catch (error) {
+            console.error('[guestCleanup] Failed:', error);
+          }
+        });
+
+        cron.schedule('* * * * *', async () => {
+          try {
+            const result = await runPresenceMinuteJobs();
+            if (result.stale.closed > 0) {
+              console.log('[presence] Closed stale sessions:', result.stale);
+            }
+          } catch (error) {
+            console.error('[presence] Minute jobs failed:', error);
+          }
+        });
       });
     })
     .catch((error) => {
