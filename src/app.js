@@ -17,6 +17,7 @@ import appReleaseRoutes from './routes/appReleaseRoutes.js';
 import appRoutes from './routes/appRoutes.js';
 import guestRoutes from './routes/guestRoutes.js';
 import presenceRoutes from './routes/presenceRoutes.js';
+import listeningRoutes from './routes/listeningRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
@@ -43,6 +44,7 @@ app.use('/app-releases', appReleaseRoutes);
 app.use('/apps', appRoutes);
 app.use('/guests', guestRoutes);
 app.use('/presence', presenceRoutes);
+app.use('/listening', listeningRoutes);
 
 app.use(errorHandler);
 

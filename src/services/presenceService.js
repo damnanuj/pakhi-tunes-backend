@@ -7,6 +7,38 @@ export const STALE_WINDOW_MS = 3 * 60 * 1000;
 
 const VALID_PLATFORMS = new Set(['ios', 'android', 'web']);
 
+function normalizeCurrentTrack(currentTrack) {
+  if (!currentTrack || typeof currentTrack !== 'object') {
+    return {
+      currentSongId: null,
+      currentSongTitle: '',
+      currentSongArtist: '',
+      currentSongArtwork: '',
+      currentSongEncryptedId: '',
+      isPlayingSong: false,
+    };
+  }
+
+  const songId =
+    typeof currentTrack.songId === 'string' ? currentTrack.songId.trim() : '';
+  const isPlayingSong = Boolean(currentTrack.isPlaying && songId);
+
+  return {
+    currentSongId: isPlayingSong ? songId : null,
+    currentSongTitle:
+      typeof currentTrack.title === 'string' ? currentTrack.title.trim() : '',
+    currentSongArtist:
+      typeof currentTrack.artist === 'string' ? currentTrack.artist.trim() : '',
+    currentSongArtwork:
+      typeof currentTrack.artworkUrl === 'string' ? currentTrack.artworkUrl : '',
+    currentSongEncryptedId:
+      typeof currentTrack.encryptedId === 'string'
+        ? currentTrack.encryptedId.trim()
+        : '',
+    isPlayingSong,
+  };
+}
+
 export function normalizePlatform(platform) {
   const value = String(platform ?? 'android').trim().toLowerCase();
   return VALID_PLATFORMS.has(value) ? value : 'android';
@@ -58,6 +90,7 @@ export async function heartbeatPresence({
   platform,
   appVersion,
   userId = null,
+  currentTrack = null,
 }) {
   const normalizedDeviceId = normalizeDeviceId(deviceId);
   if (!normalizedDeviceId) {
@@ -67,6 +100,7 @@ export async function heartbeatPresence({
   const now = new Date();
   const normalizedPlatform = normalizePlatform(platform);
   const version = String(appVersion ?? '').trim();
+  const trackFields = normalizeCurrentTrack(currentTrack);
 
   let session = await PresenceSession.findOne({
     deviceId: normalizedDeviceId,
@@ -85,6 +119,7 @@ export async function heartbeatPresence({
       endedAt: null,
       durationMs: 0,
       dayKey,
+      ...trackFields,
     });
 
     const day = await ensureUsageDay(dayKey);
@@ -101,6 +136,7 @@ export async function heartbeatPresence({
     if (userId) {
       session.userId = userId;
     }
+    Object.assign(session, trackFields);
     await session.save();
     await trackDeviceOnDay(session.dayKey, normalizedDeviceId);
   }

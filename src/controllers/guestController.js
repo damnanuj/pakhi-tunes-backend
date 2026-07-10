@@ -8,6 +8,7 @@ import {
   normalizeDeviceId,
   normalizePlatform,
 } from '../services/guestService.js';
+import { GUEST_LISTENING_LIMIT_MS } from '../services/listeningService.js';
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
@@ -21,6 +22,15 @@ function parsePagination(query) {
 
 function resolveAppSlug(req) {
   return req.query.slug?.trim() || req.body?.slug?.trim() || DEFAULT_APP_LISTING_SLUG;
+}
+
+function guestListeningMeta(guest) {
+  const totalListenedMs = guest?.totalListenedMs ?? 0;
+  return {
+    totalListenedMs,
+    guestListeningLimitMs: GUEST_LISTENING_LIMIT_MS,
+    guestRemainingMs: Math.max(0, GUEST_LISTENING_LIMIT_MS - totalListenedMs),
+  };
 }
 
 export const pingGuest = asyncHandler(async (req, res) => {
@@ -53,6 +63,7 @@ export const pingGuest = asyncHandler(async (req, res) => {
         guest: guest.toSafeObject(),
         isNew: true,
         converted: false,
+        ...guestListeningMeta(guest),
       },
       201
     );
@@ -67,6 +78,7 @@ export const pingGuest = asyncHandler(async (req, res) => {
       guest: guest.toSafeObject(),
       isNew: false,
       converted: true,
+      ...guestListeningMeta(guest),
     });
   }
 
@@ -87,6 +99,7 @@ export const pingGuest = asyncHandler(async (req, res) => {
     isNew: false,
     converted: false,
     reactivated: wasInactive,
+    ...guestListeningMeta(guest),
   });
 });
 

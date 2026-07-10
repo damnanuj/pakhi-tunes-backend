@@ -22,6 +22,7 @@ const guestSchema = new mongoose.Schema(
     },
     convertedAt: { type: Date, default: null },
     lastActiveAt: { type: Date, default: Date.now, index: true },
+    totalListenedMs: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );
@@ -38,6 +39,7 @@ guestSchema.methods.toSafeObject = function toSafeObject() {
     convertedUserId: this.convertedUserId?.toString?.() ?? null,
     convertedAt: this.convertedAt?.toISOString?.() ?? null,
     lastActiveAt: this.lastActiveAt?.toISOString?.() ?? this.lastActiveAt,
+    totalListenedMs: this.totalListenedMs ?? 0,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

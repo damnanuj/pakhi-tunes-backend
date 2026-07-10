@@ -19,6 +19,12 @@ const presenceSessionSchema = new mongoose.Schema(
     endedAt: { type: Date, default: null },
     durationMs: { type: Number, default: 0, min: 0 },
     dayKey: { type: String, required: true, trim: true, index: true },
+    currentSongId: { type: String, default: null },
+    currentSongTitle: { type: String, default: '' },
+    currentSongArtist: { type: String, default: '' },
+    currentSongArtwork: { type: String, default: '' },
+    currentSongEncryptedId: { type: String, default: '' },
+    isPlayingSong: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -38,6 +44,12 @@ presenceSessionSchema.methods.toSafeObject = function toSafeObject() {
     endedAt: this.endedAt?.toISOString?.() ?? null,
     durationMs: this.durationMs ?? 0,
     dayKey: this.dayKey,
+    currentSongId: this.currentSongId ?? null,
+    currentSongTitle: this.currentSongTitle ?? '',
+    currentSongArtist: this.currentSongArtist ?? '',
+    currentSongArtwork: this.currentSongArtwork ?? '',
+    currentSongEncryptedId: this.currentSongEncryptedId ?? '',
+    isPlayingSong: Boolean(this.isPlayingSong),
   };
 };
 
