@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getLive,
+  getListeningAnalytics,
   getPopularSongs,
   getSongListenerList,
   getUserSongs,
@@ -20,6 +21,7 @@ router.use(ensureDbConnection);
 router.post('/report', optionalAuth, report);
 
 router.get('/live', auth, requireAdmin, getLive);
+router.get('/analytics', auth, requireAdmin, getListeningAnalytics);
 router.get('/users', auth, requireAdmin, listListeningUsers);
 router.get('/guests', auth, requireAdmin, listListeningGuests);
 router.get('/user/:userId/songs', auth, requireAdmin, getUserSongs);

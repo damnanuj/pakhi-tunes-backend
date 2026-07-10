@@ -1,8 +1,10 @@
 import mongoose from 'mongoose';
+import AppUsageDay from '../models/AppUsageDay.js';
 import Guest from '../models/Guest.js';
 import PresenceSession from '../models/PresenceSession.js';
 import User from '../models/User.js';
 import UserSongStats from '../models/UserSongStats.js';
+import { getIstDayBounds, getIstDayKey } from '../utils/istDayKey.js';
 import { LIVE_WINDOW_MS } from './presenceService.js';
 import { normalizeDeviceId } from './guestService.js';
 
@@ -470,4 +472,72 @@ export async function getLiveListeners(now = new Date()) {
     sampledAt: now.toISOString(),
     songs: [...grouped.values()].sort((a, b) => b.listenerCount - a.listenerCount),
   };
+}
+
+const LISTENING_ANALYTICS_NOTES = [
+  'Daily listening minutes and total replay counts are not stored per day.',
+  'Unique listeners and songs are based on registered-user listening reports (lastPlayedAt).',
+  'Peak concurrent users comes from presence tracking, not playback reports.',
+];
+
+export async function getListeningAnalyticsForDate(dayKey, now = new Date()) {
+  const { start, end } = getIstDayBounds(dayKey);
+  const lastPlayedFilter = { lastPlayedAt: { $gte: start, $lt: end } };
+  const guestActiveFilter = { lastActiveAt: { $gte: start, $lt: end } };
+
+  const [usageDay, listeningAggregate, activeGuests] = await Promise.all([
+    AppUsageDay.findOne({ dayKey }).lean(),
+    UserSongStats.aggregate([
+      { $match: lastPlayedFilter },
+      {
+        $group: {
+          _id: null,
+          uniqueListeners: { $addToSet: '$userId' },
+          uniqueSongs: { $addToSet: '$songId' },
+          listeningEntries: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          uniqueListeners: { $size: '$uniqueListeners' },
+          uniqueSongsPlayed: { $size: '$uniqueSongs' },
+          listeningEntries: 1,
+        },
+      },
+    ]),
+    Guest.countDocuments(guestActiveFilter),
+  ]);
+
+  const listening = listeningAggregate[0] ?? {
+    uniqueListeners: 0,
+    uniqueSongsPlayed: 0,
+    listeningEntries: 0,
+  };
+
+  return {
+    date: dayKey,
+    sampledAt: now.toISOString(),
+    presence: {
+      peakLiveCount: usageDay?.peakLiveCount ?? 0,
+      totalSessions: usageDay?.totalSessions ?? 0,
+      uniqueDevices: usageDay?.uniqueDevices ?? 0,
+      totalForegroundMs: usageDay?.totalDurationMs ?? 0,
+    },
+    listening: {
+      uniqueListeners: listening.uniqueListeners ?? 0,
+      uniqueSongsPlayed: listening.uniqueSongsPlayed ?? 0,
+      listeningEntries: listening.listeningEntries ?? 0,
+    },
+    guests: {
+      activeGuests,
+    },
+    dataNotes: LISTENING_ANALYTICS_NOTES,
+  };
+}
+
+export function resolveListeningAnalyticsDayKey(dateParam) {
+  if (!dateParam) {
+    return getIstDayKey();
+  }
+  return String(dateParam).trim();
 }

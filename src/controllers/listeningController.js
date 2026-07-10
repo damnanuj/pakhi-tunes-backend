@@ -4,6 +4,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { normalizeDeviceId } from '../services/guestService.js';
 import {
   getLiveListeners,
+  getListeningAnalyticsForDate,
   getSongListeners,
   getSongPopularity,
   getUserListeningSummary,
@@ -13,7 +14,9 @@ import {
   GUEST_LISTENING_LIMIT_MS,
   normalizeListeningPayload,
   reportListening,
+  resolveListeningAnalyticsDayKey,
 } from '../services/listeningService.js';
+import { isValidIstDayKey } from '../utils/istDayKey.js';
 
 function shouldTrackStats(req) {
   return req.body?.trackStats === true;
@@ -110,5 +113,15 @@ export const getSongListenerList = asyncHandler(async (req, res) => {
     page: req.query.page,
     limit: req.query.limit,
   });
+  success(res, data);
+});
+
+export const getListeningAnalytics = asyncHandler(async (req, res) => {
+  const dayKey = resolveListeningAnalyticsDayKey(req.query.date);
+  if (!isValidIstDayKey(dayKey)) {
+    throw new AppError('date must be YYYY-MM-DD (IST)', 400);
+  }
+
+  const data = await getListeningAnalyticsForDate(dayKey);
   success(res, data);
 });
