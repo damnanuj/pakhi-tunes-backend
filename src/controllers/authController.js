@@ -4,7 +4,6 @@ import { AppError } from "../utils/AppError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { signToken } from "../utils/jwt.js";
 import { convertGuestToUser } from "../services/guestService.js";
-import { verifyFirebaseIdToken } from "../config/firebaseAdmin.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -122,6 +121,7 @@ export const googleLogin = asyncHandler(async (req, res) => {
     throw new AppError("idToken is required", 400);
   }
 
+  const { verifyFirebaseIdToken } = await import("../config/firebaseAdmin.js");
   const decoded = await verifyFirebaseIdToken(idToken);
   const googleUid = decoded.uid;
   const email = validateEmail(decoded.email);
