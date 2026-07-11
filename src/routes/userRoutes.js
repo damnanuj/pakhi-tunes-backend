@@ -1,17 +1,24 @@
 import { Router } from 'express';
-import { getUsers, getUser, createUser, updateDiscoverable } from '../controllers/userController.js';
-import { auth, optionalAuth } from '../middlewares/auth.js';
+import {
+  deleteUserAdmin,
+  getUser,
+  listUsersAdmin,
+  toggleUserBan,
+  updateDiscoverable,
+} from '../controllers/userController.js';
+import { auth } from '../middlewares/auth.js';
 import { ensureDbConnection } from '../middlewares/ensureDbConnection.js';
+import { requireAdmin } from '../middlewares/requireAdmin.js';
+import { requireSelf } from '../middlewares/requireSelf.js';
 
 const router = Router();
 
 router.use(ensureDbConnection);
-router.use(optionalAuth);
 
 router.patch('/me/discoverable', auth, updateDiscoverable);
-
-router.get('/', getUsers);
-router.get('/:id', getUser);
-router.post('/', createUser);
+router.get('/admin/list', auth, requireAdmin, listUsersAdmin);
+router.patch('/:id/ban', auth, requireAdmin, toggleUserBan);
+router.delete('/:id', auth, requireAdmin, deleteUserAdmin);
+router.get('/:id', auth, requireSelf, getUser);
 
 export default router;

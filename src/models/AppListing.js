@@ -13,6 +13,7 @@ const appListingSchema = new mongoose.Schema(
     availableOn: { type: [String], default: [] },
     downloadUrl: { type: String, default: '', trim: true },
     downloadCount: { type: Number, default: 0, min: 0 },
+    conversionCount: { type: Number, default: 0, min: 0 },
     updatedOn: { type: String, default: '', trim: true },
   },
   { timestamps: true }
@@ -31,6 +32,7 @@ appListingSchema.methods.toPublicObject = function toPublicObject() {
     availableOn: this.availableOn,
     downloadUrl: this.downloadUrl,
     downloadCount: this.downloadCount,
+    conversionCount: this.conversionCount,
     updatedOn: this.updatedOn || undefined,
     updatedAt: this.updatedAt?.toISOString?.() ?? this.updatedAt,
   };

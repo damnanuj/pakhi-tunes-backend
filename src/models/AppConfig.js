@@ -5,6 +5,8 @@ const appConfigSchema = new mongoose.Schema(
     updateAvailable: { type: Boolean, default: false },
     forceUpdate: { type: Boolean, default: false },
     latestVersion: { type: String, default: '1.0.0' },
+    minSupportedVersion: { type: String, default: '1.0.0' },
+    softUpdateEnabled: { type: Boolean, default: false },
     downloadUrl: { type: String, default: '' },
     updateTitle: { type: String, default: 'Update Available' },
     updateMessage: {
