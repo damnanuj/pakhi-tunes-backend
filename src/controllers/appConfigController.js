@@ -3,6 +3,8 @@ import { success } from '../utils/apiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import {
   APP_CONFIG_DEFAULTS,
+  enrichConfigFromLiveRelease,
+  getLiveConfigRepairUpdates,
   resolvePublicConfig,
   toAdminConfig,
   validateAppConfigPatchBody,
@@ -25,13 +27,24 @@ export async function ensureAppConfigDoc() {
 
 export const getAppConfig = asyncHandler(async (req, res) => {
   const doc = await findLiveAppConfig();
+  const enriched = await enrichConfigFromLiveRelease(doc);
   const clientVersion = req.get('x-app-version')?.trim() || null;
-  success(res, resolvePublicConfig(doc, clientVersion));
+  success(res, resolvePublicConfig(enriched, clientVersion));
 });
 
 export const getAdminAppConfig = asyncHandler(async (req, res) => {
   const doc = await findLiveAppConfig();
-  success(res, toAdminConfig(doc));
+  const enriched = await enrichConfigFromLiveRelease(doc);
+
+  if (doc) {
+    const repairUpdates = getLiveConfigRepairUpdates(doc, enriched);
+    if (Object.keys(repairUpdates).length > 0) {
+      doc.set(repairUpdates);
+      await doc.save();
+    }
+  }
+
+  success(res, toAdminConfig(enriched, doc));
 });
 
 export const updateAppConfig = asyncHandler(async (req, res) => {
@@ -41,7 +54,8 @@ export const updateAppConfig = asyncHandler(async (req, res) => {
   Object.assign(doc, updates);
   await doc.save();
 
-  success(res, toAdminConfig(doc));
+  const enriched = await enrichConfigFromLiveRelease(doc);
+  success(res, toAdminConfig(enriched, doc));
 });
 
 export const deleteAppConfig = asyncHandler(async (req, res) => {

@@ -1,3 +1,4 @@
+import AppRelease from '../models/AppRelease.js';
 import { AppError } from './AppError.js';
 import { isLessThan } from './semverCompare.js';
 
@@ -57,18 +58,82 @@ export const RELEASE_SECTION_DEFAULTS = [
   { title: 'Improvements', items: ['', '', ''] },
 ];
 
+export function toPlainConfig(config) {
+  if (!config) return null;
+  if (typeof config.toObject === 'function') {
+    return config.toObject({ virtuals: true });
+  }
+  return config;
+}
+
 export function normalizeConfigFields(config = APP_CONFIG_DEFAULTS) {
-  const latestVersion = config.latestVersion ?? APP_CONFIG_DEFAULTS.latestVersion;
+  const source = toPlainConfig(config) ?? APP_CONFIG_DEFAULTS;
+  const latestVersion = source.latestVersion ?? APP_CONFIG_DEFAULTS.latestVersion;
   const minSupportedVersion =
-    config.minSupportedVersion ?? latestVersion ?? APP_CONFIG_DEFAULTS.minSupportedVersion;
+    source.minSupportedVersion ?? latestVersion ?? APP_CONFIG_DEFAULTS.minSupportedVersion;
 
   return {
     ...APP_CONFIG_DEFAULTS,
-    ...config,
+    ...source,
     latestVersion,
     minSupportedVersion,
-    softUpdateEnabled: Boolean(config.softUpdateEnabled),
+    softUpdateEnabled: Boolean(source.softUpdateEnabled),
   };
+}
+
+async function findReleaseForVersion(version) {
+  if (!version) return null;
+
+  const liveRelease = await AppRelease.findOne({
+    version,
+    archivedAt: null,
+  }).lean();
+
+  if (liveRelease) return liveRelease;
+
+  return AppRelease.findOne({ version }).sort({ releasedAt: -1 }).lean();
+}
+
+export async function enrichConfigFromLiveRelease(config) {
+  const normalized = normalizeConfigFields(config);
+  const hasDownloadUrl = Boolean(normalized.downloadUrl?.trim());
+  const hasReleaseSections =
+    normalizeReleaseSections(normalized.releaseSections).length > 0;
+
+  if (hasDownloadUrl && hasReleaseSections) {
+    return normalized;
+  }
+
+  const release = await findReleaseForVersion(normalized.latestVersion);
+  if (!release) return normalized;
+
+  return {
+    ...normalized,
+    downloadUrl: hasDownloadUrl ? normalized.downloadUrl : (release.downloadUrl ?? ''),
+    releaseSections: hasReleaseSections
+      ? normalizeReleaseSections(normalized.releaseSections)
+      : normalizeReleaseSections(release.releaseSections),
+    updatedAt: normalized.updatedAt ?? release.updatedAt ?? null,
+  };
+}
+
+export function getLiveConfigRepairUpdates(currentConfig, enrichedConfig) {
+  const current = normalizeConfigFields(currentConfig);
+  const enriched = normalizeConfigFields(enrichedConfig);
+  const updates = {};
+
+  if (!current.downloadUrl?.trim() && enriched.downloadUrl?.trim()) {
+    updates.downloadUrl = enriched.downloadUrl;
+  }
+
+  if (
+    normalizeReleaseSections(current.releaseSections).length === 0 &&
+    normalizeReleaseSections(enriched.releaseSections).length > 0
+  ) {
+    updates.releaseSections = enriched.releaseSections;
+  }
+
+  return updates;
 }
 
 export function normalizeReleaseSections(sections) {
@@ -156,12 +221,13 @@ export function toPublicConfig(doc) {
   return resolvePublicConfig(doc, null);
 }
 
-export function toAdminConfig(doc) {
-  const config = normalizeConfigFields(doc ?? APP_CONFIG_DEFAULTS);
+export function toAdminConfig(configInput, doc = null) {
+  const config = normalizeConfigFields(configInput ?? APP_CONFIG_DEFAULTS);
   const versionPolicySummary = buildVersionPolicySummary(config);
+  const exists = doc != null ? Boolean(doc) : configInput != null;
 
   return {
-    exists: Boolean(doc),
+    exists,
     updateAvailable: Boolean(config.updateAvailable),
     forceUpdate: Boolean(config.forceUpdate),
     latestVersion: config.latestVersion,
