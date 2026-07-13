@@ -13,10 +13,11 @@ import { requireAdmin } from '../middlewares/requireAdmin.js';
 
 const router = Router();
 
+router.get('/', ensureDbConnection, getAppReleases);
+
 router.use(ensureDbConnection);
 router.use(auth, requireAdmin);
 
-router.get('/', getAppReleases);
 router.post('/', createAppRelease);
 router.get('/:id', getAppRelease);
 router.patch('/:id', patchAppRelease);
