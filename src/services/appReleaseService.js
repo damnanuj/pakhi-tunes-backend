@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import AppConfig from '../models/AppConfig.js';
+import AppListing from '../models/AppListing.js';
 import AppRelease from '../models/AppRelease.js';
 import { AppError } from '../utils/AppError.js';
 import {
@@ -12,10 +13,22 @@ import {
   validateReleasePatchBody,
 } from '../utils/appConfigShared.js';
 import { findLiveAppConfig } from '../controllers/appConfigController.js';
+import { DEFAULT_APP_LISTING_SLUG } from './guestService.js';
 
 async function getLiveVersion() {
   const doc = await findLiveAppConfig();
   return doc?.latestVersion ?? null;
+}
+
+async function syncAppListingDownloadUrl(downloadUrl, sessionOptions = {}) {
+  const trimmed = typeof downloadUrl === 'string' ? downloadUrl.trim() : '';
+  if (!trimmed) return;
+
+  await AppListing.findOneAndUpdate(
+    { slug: DEFAULT_APP_LISTING_SLUG },
+    { downloadUrl: trimmed },
+    sessionOptions
+  );
 }
 
 async function upsertArchivedRelease(snapshot, archiveOptions) {
@@ -137,6 +150,8 @@ export async function publishNewRelease(body) {
     const releaseDoc = releasePayloadToReleaseDoc(payload);
     const createdRelease = await AppRelease.create([releaseDoc], archiveOptions);
 
+    await syncAppListingDownloadUrl(payload.downloadUrl, archiveOptions);
+
     return toReleaseListItem(
       createdRelease[0],
       nextLiveDoc.latestVersion ?? payload.version
@@ -241,6 +256,8 @@ export async function publishExistingRelease(id) {
     release.archivedAt = null;
     release.releasedAt = new Date();
     await release.save(archiveOptions);
+
+    await syncAppListingDownloadUrl(release.downloadUrl, archiveOptions);
 
     return toReleaseListItem(release, nextLiveDoc.latestVersion);
   });
