@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { success } from '../utils/apiResponse.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { generateUniqueRoomCode } from '../utils/roomCode.js';
 
 const DEFAULT_RADIUS_METERS = 500;
 const MAX_RADIUS_METERS = 5000;
@@ -54,26 +55,96 @@ export const upsertSession = asyncHandler(async (req, res) => {
   const session = await ActiveSession.findOneAndUpdate(
     { hostId: req.user.id },
     {
-      hostId: req.user.id,
-      hostName: user.name,
-      hostAvatar: user.avatar ?? null,
-      trackId,
-      trackTitle: trackTitle ?? '',
-      trackArtist: trackArtist ?? '',
-      trackArtwork: trackArtwork ?? '',
-      trackUri: trackUri ?? '',
-      trackDuration: Number(trackDuration) || 0,
-      playing: playing !== false,
-      positionMs: Math.max(0, Number(positionMs) || 0),
-      location: {
-        type: 'Point',
-        coordinates: [lng, lat],
+      $set: {
+        hostId: req.user.id,
+        hostName: user.name,
+        hostAvatar: user.avatar ?? null,
+        trackId,
+        trackTitle: trackTitle ?? '',
+        trackArtist: trackArtist ?? '',
+        trackArtwork: trackArtwork ?? '',
+        trackUri: trackUri ?? '',
+        trackDuration: Number(trackDuration) || 0,
+        playing: playing !== false,
+        positionMs: Math.max(0, Number(positionMs) || 0),
+        visibility: 'nearby',
+        location: {
+          type: 'Point',
+          coordinates: [lng, lat],
+        },
       },
+      $unset: { roomCode: 1 },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
   success(res, { session: session.toPublicObject() }, 200);
+});
+
+export const createPrivateRoom = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found', 404);
+
+  const {
+    trackId,
+    trackTitle,
+    trackArtist,
+    trackArtwork,
+    trackUri,
+    trackDuration,
+    playing,
+    positionMs,
+  } = req.body;
+
+  if (!trackId) throw new AppError('trackId is required', 400);
+
+  const existing = await ActiveSession.findOne({ hostId: req.user.id });
+  let roomCode = existing?.visibility === 'private' ? existing.roomCode : null;
+  if (!roomCode) {
+    roomCode = await generateUniqueRoomCode();
+  }
+
+  const session = await ActiveSession.findOneAndUpdate(
+    { hostId: req.user.id },
+    {
+      $set: {
+        hostId: req.user.id,
+        hostName: user.name,
+        hostAvatar: user.avatar ?? null,
+        trackId,
+        trackTitle: trackTitle ?? '',
+        trackArtist: trackArtist ?? '',
+        trackArtwork: trackArtwork ?? '',
+        trackUri: trackUri ?? '',
+        trackDuration: Number(trackDuration) || 0,
+        playing: playing !== false,
+        positionMs: Math.max(0, Number(positionMs) || 0),
+        visibility: 'private',
+        roomCode,
+      },
+      $unset: { location: 1 },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  success(res, { session: session.toPublicObject() }, 200);
+});
+
+export const getSessionByCode = asyncHandler(async (req, res) => {
+  const code = String(req.params.code ?? '').trim();
+  if (!/^\d{4}$/.test(code)) {
+    throw new AppError('Room code must be a 4-digit number', 400);
+  }
+
+  const session = await ActiveSession.findOne({
+    roomCode: code,
+    visibility: 'private',
+  });
+  if (!session) {
+    throw new AppError('Room not found', 404);
+  }
+
+  success(res, { session: session.toPublicObject() });
 });
 
 export const getNearbySessions = asyncHandler(async (req, res) => {
@@ -89,6 +160,8 @@ export const getNearbySessions = asyncHandler(async (req, res) => {
         spherical: true,
         query: {
           hostId: { $ne: new mongoose.Types.ObjectId(req.user.id) },
+          visibility: { $ne: 'private' },
+          'location.coordinates.0': { $exists: true },
         },
       },
     },
@@ -110,6 +183,8 @@ export const getNearbySessions = asyncHandler(async (req, res) => {
     playing: s.playing,
     positionMs: s.positionMs,
     listenerCount: s.listenerCount,
+    visibility: s.visibility ?? 'nearby',
+    roomCode: s.roomCode ?? null,
     distanceMeters: Math.round(s.distanceMeters ?? 0),
     updatedAt: s.updatedAt,
   }));

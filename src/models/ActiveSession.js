@@ -19,6 +19,15 @@ const activeSessionSchema = new mongoose.Schema(
     playing: { type: Boolean, default: true },
     positionMs: { type: Number, default: 0 },
     listenerCount: { type: Number, default: 0 },
+    visibility: {
+      type: String,
+      enum: ['nearby', 'private'],
+      default: 'nearby',
+    },
+    roomCode: {
+      type: String,
+      default: undefined,
+    },
     location: {
       type: {
         type: String,
@@ -27,14 +36,15 @@ const activeSessionSchema = new mongoose.Schema(
       },
       coordinates: {
         type: [Number],
-        required: true,
+        required: false,
       },
     },
   },
   { timestamps: true }
 );
 
-activeSessionSchema.index({ location: '2dsphere' });
+activeSessionSchema.index({ location: '2dsphere' }, { sparse: true });
+activeSessionSchema.index({ roomCode: 1 }, { unique: true, sparse: true });
 activeSessionSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 3600 });
 
 activeSessionSchema.methods.toPublicObject = function toPublicObject() {
@@ -52,6 +62,8 @@ activeSessionSchema.methods.toPublicObject = function toPublicObject() {
     playing: this.playing,
     positionMs: this.positionMs,
     listenerCount: this.listenerCount,
+    visibility: this.visibility ?? 'nearby',
+    roomCode: this.roomCode ?? null,
     location: this.location,
     updatedAt: this.updatedAt,
   };
