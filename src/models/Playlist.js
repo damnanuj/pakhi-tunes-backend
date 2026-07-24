@@ -22,6 +22,17 @@ const playlistSchema = new mongoose.Schema(
     },
     name: { type: String, required: true, trim: true },
     coverUrl: { type: String, default: '', trim: true },
+    visibility: {
+      type: String,
+      enum: ['private', 'public'],
+      default: 'private',
+      index: true,
+    },
+    likesCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     songs: { type: [playlistSongSchema], default: [] },
   },
   { timestamps: true }
@@ -34,6 +45,8 @@ playlistSchema.methods.toSafeObject = function toSafeObject() {
     id: this._id.toString(),
     name: this.name,
     coverUrl: this.coverUrl ?? '',
+    visibility: this.visibility ?? 'private',
+    likesCount: this.likesCount ?? 0,
     songCount: Array.isArray(this.songs) ? this.songs.length : 0,
     songs: (this.songs ?? []).map((song) => ({
       songId: song.songId,
@@ -53,6 +66,8 @@ playlistSchema.methods.toListObject = function toListObject() {
     id: this._id.toString(),
     name: this.name,
     coverUrl: this.coverUrl ?? '',
+    visibility: this.visibility ?? 'private',
+    likesCount: this.likesCount ?? 0,
     songCount: Array.isArray(this.songs) ? this.songs.length : 0,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,

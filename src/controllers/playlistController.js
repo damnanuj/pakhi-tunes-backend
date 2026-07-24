@@ -93,6 +93,8 @@ export const createPlaylist = asyncHandler(async (req, res) => {
     userId: req.user.id,
     name,
     coverUrl,
+    visibility: 'private',
+    likesCount: 0,
     songs: [],
   });
 
