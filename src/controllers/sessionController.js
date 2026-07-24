@@ -124,7 +124,8 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
       },
       $unset: { location: 1 },
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    // Avoid nested location.type default creating { type: 'Point' } without coordinates
+    { upsert: true, new: true, setDefaultsOnInsert: false }
   );
 
   success(res, { session: session.toPublicObject() }, 200);

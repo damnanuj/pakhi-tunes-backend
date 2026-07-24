@@ -147,31 +147,42 @@ export function registerSessionSocket(io) {
     });
 
     socket.on('host:heartbeat', async (payload) => {
-      const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      const session = await getSessionById(sessionId);
-      if (!session) return;
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) return;
+        const session = await getSessionById(sessionId);
+        if (!session) return;
 
-      const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-      session.positionMs = positionMs;
-      if (payload?.playing !== undefined) session.playing = Boolean(payload.playing);
-      if (payload?.trackId) session.trackId = payload.trackId;
-      if (payload?.latitude !== undefined && payload?.longitude !== undefined) {
-        session.location = {
-          type: 'Point',
-          coordinates: [Number(payload.longitude), Number(payload.latitude)],
-        };
+        const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
+        session.positionMs = positionMs;
+        if (payload?.playing !== undefined) session.playing = Boolean(payload.playing);
+        if (payload?.trackId) session.trackId = payload.trackId;
+        if (
+          payload?.latitude !== undefined &&
+          payload?.longitude !== undefined &&
+          Number.isFinite(Number(payload.latitude)) &&
+          Number.isFinite(Number(payload.longitude))
+        ) {
+          session.location = {
+            type: 'Point',
+            coordinates: [Number(payload.longitude), Number(payload.latitude)],
+          };
+        } else if (session.visibility === 'private') {
+          session.set('location', undefined);
+        }
+        await session.save();
+
+        socket.to(sessionRoom(sessionId)).emit('session:heartbeat', {
+          type: 'HEARTBEAT',
+          positionMs,
+          playing: session.playing,
+          trackId: session.trackId,
+          sentAt: Date.now(),
+          repeatMode: payload?.repeatMode,
+        });
+      } catch (error) {
+        console.error('[session] host:heartbeat failed:', error?.message ?? error);
       }
-      await session.save();
-
-      socket.to(sessionRoom(sessionId)).emit('session:heartbeat', {
-        type: 'HEARTBEAT',
-        positionMs,
-        playing: session.playing,
-        trackId: session.trackId,
-        sentAt: Date.now(),
-        repeatMode: payload?.repeatMode,
-      });
     });
 
     socket.on('host:stop', async () => {
