@@ -18,6 +18,7 @@ import appRoutes from './routes/appRoutes.js';
 import guestRoutes from './routes/guestRoutes.js';
 import presenceRoutes from './routes/presenceRoutes.js';
 import listeningRoutes from './routes/listeningRoutes.js';
+import playlistRoutes from './routes/playlistRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
@@ -32,6 +33,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/auth', authRoutes);
 app.use('/favorites', favoritesRoutes);
 app.use('/history', historyRoutes);
+app.use('/playlists', playlistRoutes);
 app.use('/users', userRoutes);
 app.use('/top-artists', artistRoutes);
 app.use('/songs', songRoutes);
