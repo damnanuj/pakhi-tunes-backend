@@ -103,7 +103,7 @@ export const createPlaylist = asyncHandler(async (req, res) => {
 
 export const getPlaylist = asyncHandler(async (req, res) => {
   const playlist = await findUserPlaylist(req.user.id, req.params.id);
-  success(res, playlist.toSafeObject());
+  success(res, playlist.toSafeObject({ songSort: req.query.sort }));
 });
 
 export const updatePlaylist = asyncHandler(async (req, res) => {

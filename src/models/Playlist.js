@@ -12,6 +12,21 @@ const playlistSongSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const SONG_SORTS = {
+  addedAt_desc: (a, b) => new Date(b.addedAt) - new Date(a.addedAt),
+  addedAt_asc: (a, b) => new Date(a.addedAt) - new Date(b.addedAt),
+  title_asc: (a, b) =>
+    a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+  title_desc: (a, b) =>
+    b.title.localeCompare(a.title, undefined, { sensitivity: 'base' }),
+};
+
+export const DEFAULT_SONG_SORT = 'addedAt_desc';
+
+export function resolveSongSort(value) {
+  return SONG_SORTS[value] ? value : DEFAULT_SONG_SORT;
+}
+
 const playlistSchema = new mongoose.Schema(
   {
     userId: {
@@ -40,7 +55,10 @@ const playlistSchema = new mongoose.Schema(
 
 playlistSchema.index({ userId: 1, createdAt: -1 });
 
-playlistSchema.methods.toSafeObject = function toSafeObject() {
+playlistSchema.methods.toSafeObject = function toSafeObject(options = {}) {
+  const songs = [...(this.songs ?? [])];
+  songs.sort(SONG_SORTS[resolveSongSort(options.songSort)]);
+
   return {
     id: this._id.toString(),
     name: this.name,
@@ -48,7 +66,7 @@ playlistSchema.methods.toSafeObject = function toSafeObject() {
     visibility: this.visibility ?? 'private',
     likesCount: this.likesCount ?? 0,
     songCount: Array.isArray(this.songs) ? this.songs.length : 0,
-    songs: (this.songs ?? []).map((song) => ({
+    songs: songs.map((song) => ({
       songId: song.songId,
       encryptedId: song.encryptedId ?? '',
       title: song.title,
