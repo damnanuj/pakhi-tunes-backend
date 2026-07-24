@@ -1,5 +1,18 @@
 import mongoose from 'mongoose';
 
+const sessionListenerSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    name: { type: String, trim: true, default: 'Listener' },
+    avatar: { type: String, default: null },
+  },
+  { _id: false }
+);
+
 const activeSessionSchema = new mongoose.Schema(
   {
     hostId: {
@@ -10,15 +23,16 @@ const activeSessionSchema = new mongoose.Schema(
     },
     hostName: { type: String, trim: true },
     hostAvatar: { type: String, default: null },
-    trackId: { type: String, required: true },
-    trackTitle: { type: String },
-    trackArtist: { type: String },
-    trackArtwork: { type: String },
-    trackUri: { type: String },
+    trackId: { type: String, default: '' },
+    trackTitle: { type: String, default: '' },
+    trackArtist: { type: String, default: '' },
+    trackArtwork: { type: String, default: '' },
+    trackUri: { type: String, default: '' },
     trackDuration: { type: Number, default: 0 },
-    playing: { type: Boolean, default: true },
+    playing: { type: Boolean, default: false },
     positionMs: { type: Number, default: 0 },
     listenerCount: { type: Number, default: 0 },
+    listeners: { type: [sessionListenerSchema], default: [] },
     visibility: {
       type: String,
       enum: ['nearby', 'private'],
@@ -63,6 +77,15 @@ function stripInvalidLocation(doc) {
   }
 }
 
+function mapListeners(listeners) {
+  if (!Array.isArray(listeners)) return [];
+  return listeners.map((listener) => ({
+    userId: listener.userId?.toString?.() ?? String(listener.userId),
+    name: listener.name ?? 'Listener',
+    avatar: listener.avatar ?? null,
+  }));
+}
+
 activeSessionSchema.pre('save', function stripLocationOnSave(next) {
   stripInvalidLocation(this);
   next();
@@ -95,7 +118,7 @@ activeSessionSchema.methods.toPublicObject = function toPublicObject() {
     hostId: this.hostId.toString(),
     hostName: this.hostName ?? 'Listener',
     hostAvatar: this.hostAvatar ?? null,
-    trackId: this.trackId,
+    trackId: this.trackId ?? '',
     trackTitle: this.trackTitle ?? '',
     trackArtist: this.trackArtist ?? '',
     trackArtwork: this.trackArtwork ?? '',
@@ -104,6 +127,7 @@ activeSessionSchema.methods.toPublicObject = function toPublicObject() {
     playing: this.playing,
     positionMs: this.positionMs,
     listenerCount: this.listenerCount,
+    listeners: mapListeners(this.listeners),
     visibility: this.visibility ?? 'nearby',
     roomCode: this.roomCode ?? null,
     location: hasValidCoordinates(this.location) ? this.location : undefined,

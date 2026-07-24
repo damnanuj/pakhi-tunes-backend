@@ -1,4 +1,5 @@
 import ActiveSession from '../models/ActiveSession.js';
+import User from '../models/User.js';
 import { verifyToken } from '../utils/jwt.js';
 
 function sessionRoom(sessionId) {
@@ -8,6 +9,42 @@ function sessionRoom(sessionId) {
 async function getSessionById(sessionId) {
   if (!sessionId) return null;
   return ActiveSession.findById(sessionId);
+}
+
+function mapListeners(listeners) {
+  if (!Array.isArray(listeners)) return [];
+  return listeners.map((listener) => ({
+    userId: listener.userId?.toString?.() ?? String(listener.userId),
+    name: listener.name ?? 'Listener',
+    avatar: listener.avatar ?? null,
+  }));
+}
+
+function emitListenersUpdate(io, sessionId, session) {
+  const listeners = mapListeners(session.listeners);
+  const listenerCount = listeners.length;
+  io.to(sessionRoom(sessionId)).emit('session:listeners', {
+    type: 'LISTENERS_UPDATED',
+    listenerCount,
+    listeners,
+  });
+  io.to(sessionRoom(sessionId)).emit('session:listenerCount', {
+    type: 'LISTENERS_UPDATED',
+    listenerCount,
+  });
+}
+
+async function removeListenerFromSession(io, session, userId) {
+  if (!session) return;
+  const before = session.listeners?.length ?? 0;
+  session.listeners = (session.listeners ?? []).filter(
+    (listener) => listener.userId.toString() !== userId
+  );
+  session.listenerCount = session.listeners.length;
+  if (session.listeners.length !== before || session.listenerCount !== before) {
+    await session.save();
+    emitListenersUpdate(io, session._id.toString(), session);
+  }
 }
 
 async function endSession(io, sessionId) {
@@ -58,7 +95,12 @@ export function registerSessionSocket(io) {
         socket.data.role = 'host';
         socket.data.sessionId = sessionId;
         socket.join(sessionRoom(sessionId));
-        ack?.({ ok: true, sessionId });
+        ack?.({
+          ok: true,
+          sessionId,
+          listeners: mapListeners(session.listeners),
+          listenerCount: session.listeners?.length ?? 0,
+        });
       } catch (error) {
         ack?.({ ok: false, error: error?.message ?? 'Failed to start host' });
       }
@@ -119,16 +161,28 @@ export function registerSessionSocket(io) {
       const session = await getSessionById(sessionId);
       if (!session) return;
 
-      if (payload?.trackId) session.trackId = payload.trackId;
-      if (payload?.trackTitle !== undefined) session.trackTitle = payload.trackTitle;
-      if (payload?.trackArtist !== undefined) session.trackArtist = payload.trackArtist;
-      if (payload?.trackArtwork !== undefined) session.trackArtwork = payload.trackArtwork;
-      if (payload?.trackUri !== undefined) session.trackUri = payload.trackUri;
-      if (payload?.trackDuration !== undefined) {
-        session.trackDuration = Number(payload.trackDuration) || 0;
+      const clearing = !payload?.trackId;
+      if (clearing) {
+        session.trackId = '';
+        session.trackTitle = '';
+        session.trackArtist = '';
+        session.trackArtwork = '';
+        session.trackUri = '';
+        session.trackDuration = 0;
+        session.positionMs = 0;
+        session.playing = false;
+      } else {
+        if (payload?.trackId) session.trackId = payload.trackId;
+        if (payload?.trackTitle !== undefined) session.trackTitle = payload.trackTitle;
+        if (payload?.trackArtist !== undefined) session.trackArtist = payload.trackArtist;
+        if (payload?.trackArtwork !== undefined) session.trackArtwork = payload.trackArtwork;
+        if (payload?.trackUri !== undefined) session.trackUri = payload.trackUri;
+        if (payload?.trackDuration !== undefined) {
+          session.trackDuration = Number(payload.trackDuration) || 0;
+        }
+        session.positionMs = Math.max(0, Number(payload?.positionMs) || 0);
+        session.playing = payload?.playing !== false;
       }
-      session.positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-      session.playing = payload?.playing !== false;
       await session.save();
 
       socket.to(sessionRoom(sessionId)).emit('session:trackChange', {
@@ -206,20 +260,30 @@ export function registerSessionSocket(io) {
           return;
         }
 
+        const user = await User.findById(userId).select('name avatar');
+        const member = {
+          userId,
+          name: user?.name ?? socket.user.name ?? 'Listener',
+          avatar: user?.avatar ?? null,
+        };
+
+        const existingListeners = session.listeners ?? [];
+        const withoutSelf = existingListeners.filter(
+          (listener) => listener.userId.toString() !== userId
+        );
+        session.listeners = [...withoutSelf, member];
+        session.listenerCount = session.listeners.length;
+
         socket.data.role = 'listener';
         socket.data.sessionId = sessionId;
         socket.join(sessionRoom(sessionId));
 
-        session.listenerCount = Math.max(0, (session.listenerCount ?? 0) + 1);
         await session.save();
 
         const snapshot = session.toPublicObject();
         ack?.({ ok: true, session: snapshot });
 
-        socket.to(sessionRoom(sessionId)).emit('session:listenerCount', {
-          type: 'LISTENER_CONNECTED',
-          listenerCount: session.listenerCount,
-        });
+        emitListenersUpdate(io, sessionId, session);
       } catch (error) {
         ack?.({ ok: false, error: error?.message ?? 'Failed to join session' });
       }
@@ -230,14 +294,7 @@ export function registerSessionSocket(io) {
       if (socket.data.role !== 'listener' || !sessionId) return;
 
       const session = await getSessionById(sessionId);
-      if (session) {
-        session.listenerCount = Math.max(0, (session.listenerCount ?? 0) - 1);
-        await session.save();
-        io.to(sessionRoom(sessionId)).emit('session:listenerCount', {
-          type: 'LISTENER_DISCONNECTED',
-          listenerCount: session.listenerCount,
-        });
-      }
+      await removeListenerFromSession(io, session, userId);
 
       socket.leave(sessionRoom(sessionId));
       socket.data.role = null;
@@ -255,14 +312,7 @@ export function registerSessionSocket(io) {
 
       if (socket.data.role === 'listener') {
         const session = await getSessionById(sessionId);
-        if (session) {
-          session.listenerCount = Math.max(0, (session.listenerCount ?? 0) - 1);
-          await session.save();
-          io.to(sessionRoom(sessionId)).emit('session:listenerCount', {
-            type: 'LISTENER_DISCONNECTED',
-            listenerCount: session.listenerCount,
-          });
-        }
+        await removeListenerFromSession(io, session, userId);
       }
     });
   });

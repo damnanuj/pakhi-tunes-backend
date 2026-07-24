@@ -94,9 +94,7 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
     trackDuration,
     playing,
     positionMs,
-  } = req.body;
-
-  if (!trackId) throw new AppError('trackId is required', 400);
+  } = req.body ?? {};
 
   const existing = await ActiveSession.findOne({ hostId: req.user.id });
   let roomCode = existing?.visibility === 'private' ? existing.roomCode : null;
@@ -104,6 +102,7 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
     roomCode = await generateUniqueRoomCode();
   }
 
+  const hasTrack = Boolean(trackId);
   const session = await ActiveSession.findOneAndUpdate(
     { hostId: req.user.id },
     {
@@ -111,16 +110,19 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
         hostId: req.user.id,
         hostName: user.name,
         hostAvatar: user.avatar ?? null,
-        trackId,
-        trackTitle: trackTitle ?? '',
-        trackArtist: trackArtist ?? '',
-        trackArtwork: trackArtwork ?? '',
-        trackUri: trackUri ?? '',
-        trackDuration: Number(trackDuration) || 0,
-        playing: playing !== false,
-        positionMs: Math.max(0, Number(positionMs) || 0),
+        trackId: hasTrack ? trackId : '',
+        trackTitle: hasTrack ? (trackTitle ?? '') : '',
+        trackArtist: hasTrack ? (trackArtist ?? '') : '',
+        trackArtwork: hasTrack ? (trackArtwork ?? '') : '',
+        trackUri: hasTrack ? (trackUri ?? '') : '',
+        trackDuration: hasTrack ? Number(trackDuration) || 0 : 0,
+        playing: hasTrack ? playing !== false : false,
+        positionMs: hasTrack ? Math.max(0, Number(positionMs) || 0) : 0,
         visibility: 'private',
         roomCode,
+        listeners: existing?.visibility === 'private' ? existing.listeners ?? [] : [],
+        listenerCount:
+          existing?.visibility === 'private' ? existing.listenerCount ?? 0 : 0,
       },
       $unset: { location: 1 },
     },
