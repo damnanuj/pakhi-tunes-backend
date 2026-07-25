@@ -1,6 +1,8 @@
-import ActiveSession from '../models/ActiveSession.js';
+import ActiveSession, { mapQueue } from '../models/ActiveSession.js';
 import User from '../models/User.js';
 import { verifyToken } from '../utils/jwt.js';
+
+const MAX_ROOM_QUEUE_SIZE = 50;
 
 function sessionRoom(sessionId) {
   return `session:${sessionId}`;
@@ -32,6 +34,62 @@ function emitListenersUpdate(io, sessionId, session) {
     type: 'LISTENERS_UPDATED',
     listenerCount,
   });
+}
+
+function emitQueueUpdated(io, sessionId, session) {
+  const queue = mapQueue(session.queue);
+  io.to(sessionRoom(sessionId)).emit('session:queueUpdated', {
+    type: 'QUEUE_UPDATED',
+    queue,
+  });
+}
+
+function validateQueueAddPayload(payload) {
+  const songId =
+    typeof payload?.songId === 'string' ? payload.songId.trim() : '';
+  const title = typeof payload?.title === 'string' ? payload.title.trim() : '';
+  const artist =
+    typeof payload?.artist === 'string' ? payload.artist.trim() : '';
+
+  if (!songId || !title || !artist) {
+    return { ok: false, error: 'songId, title, and artist are required' };
+  }
+
+  const downloadUrl = Array.isArray(payload?.downloadUrl)
+    ? payload.downloadUrl
+        .filter(
+          (entry) =>
+            entry &&
+            typeof entry.quality === 'string' &&
+            typeof entry.url === 'string' &&
+            entry.url.trim()
+        )
+        .map((entry) => ({
+          quality: entry.quality.trim(),
+          url: entry.url.trim(),
+        }))
+    : [];
+
+  return {
+    ok: true,
+    item: {
+      songId,
+      encryptedId:
+        typeof payload?.encryptedId === 'string'
+          ? payload.encryptedId.trim()
+          : '',
+      title,
+      artist,
+      artworkUrl:
+        typeof payload?.artworkUrl === 'string'
+          ? payload.artworkUrl.trim()
+          : '',
+      durationSec: Math.max(0, Number(payload?.durationSec) || 0),
+      albumName:
+        typeof payload?.albumName === 'string' ? payload.albumName.trim() : '',
+      downloadUrl,
+    },
+  };
 }
 
 async function removeListenerFromSession(io, session, userId) {
@@ -100,6 +158,7 @@ export function registerSessionSocket(io) {
           sessionId,
           listeners: mapListeners(session.listeners),
           listenerCount: session.listeners?.length ?? 0,
+          queue: mapQueue(session.queue),
         });
       } catch (error) {
         ack?.({ ok: false, error: error?.message ?? 'Failed to start host' });
@@ -182,6 +241,15 @@ export function registerSessionSocket(io) {
         }
         session.positionMs = Math.max(0, Number(payload?.positionMs) || 0);
         session.playing = payload?.playing !== false;
+
+        const nextQueued = session.queue?.[0];
+        if (
+          nextQueued &&
+          nextQueued.songId &&
+          nextQueued.songId === session.trackId
+        ) {
+          session.queue.shift();
+        }
       }
       await session.save();
 
@@ -198,6 +266,10 @@ export function registerSessionSocket(io) {
         sentAt: Date.now(),
         repeatMode: payload?.repeatMode,
       });
+
+      if (!clearing) {
+        emitQueueUpdated(io, sessionId, session);
+      }
     });
 
     socket.on('host:heartbeat', async (payload) => {
@@ -299,6 +371,85 @@ export function registerSessionSocket(io) {
       socket.leave(sessionRoom(sessionId));
       socket.data.role = null;
       socket.data.sessionId = null;
+    });
+
+    socket.on('listener:queueAdd', async (payload, ack) => {
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'listener' || !sessionId) {
+          ack?.({ ok: false, error: 'Join a room as a listener first' });
+          return;
+        }
+
+        const session = await getSessionById(sessionId);
+        if (!session || session.visibility !== 'private') {
+          ack?.({ ok: false, error: 'Room not found' });
+          return;
+        }
+
+        const isMember = (session.listeners ?? []).some(
+          (listener) => listener.userId.toString() === userId
+        );
+        if (!isMember) {
+          ack?.({ ok: false, error: 'You are not in this room' });
+          return;
+        }
+
+        if (!session.trackId?.trim() || !session.trackUri?.trim()) {
+          ack?.({
+            ok: false,
+            error: 'Wait for the host to start a song first',
+          });
+          return;
+        }
+
+        const validated = validateQueueAddPayload(payload);
+        if (!validated.ok) {
+          ack?.({ ok: false, error: validated.error });
+          return;
+        }
+
+        const queue = session.queue ?? [];
+        if (queue.length >= MAX_ROOM_QUEUE_SIZE) {
+          ack?.({ ok: false, error: 'Room queue is full' });
+          return;
+        }
+
+        if (queue.some((item) => item.songId === validated.item.songId)) {
+          ack?.({ ok: false, error: 'Song is already in the room queue' });
+          return;
+        }
+
+        if (session.trackId === validated.item.songId) {
+          ack?.({ ok: false, error: 'That song is already playing' });
+          return;
+        }
+
+        const member =
+          (session.listeners ?? []).find(
+            (listener) => listener.userId.toString() === userId
+          ) ?? null;
+
+        session.queue.push({
+          ...validated.item,
+          addedBy: {
+            userId,
+            name: member?.name ?? socket.user.name ?? 'Listener',
+            avatar: member?.avatar ?? null,
+          },
+          addedAt: new Date(),
+        });
+        await session.save();
+
+        const mappedQueue = mapQueue(session.queue);
+        emitQueueUpdated(io, sessionId, session);
+        ack?.({ ok: true, queue: mappedQueue });
+      } catch (error) {
+        ack?.({
+          ok: false,
+          error: error?.message ?? 'Could not add song to room queue',
+        });
+      }
     });
 
     socket.on('disconnect', async () => {

@@ -123,6 +123,7 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
         listeners: existing?.visibility === 'private' ? existing.listeners ?? [] : [],
         listenerCount:
           existing?.visibility === 'private' ? existing.listenerCount ?? 0 : 0,
+        queue: [],
       },
       $unset: { location: 1 },
     },

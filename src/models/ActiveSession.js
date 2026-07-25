@@ -13,6 +13,43 @@ const sessionListenerSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const sessionQueueDownloadUrlSchema = new mongoose.Schema(
+  {
+    quality: { type: String, trim: true, default: '' },
+    url: { type: String, trim: true, default: '' },
+  },
+  { _id: false }
+);
+
+const sessionQueueAddedBySchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    name: { type: String, trim: true, default: 'Listener' },
+    avatar: { type: String, default: null },
+  },
+  { _id: false }
+);
+
+const sessionQueueItemSchema = new mongoose.Schema(
+  {
+    songId: { type: String, required: true, trim: true },
+    encryptedId: { type: String, default: '', trim: true },
+    title: { type: String, required: true, trim: true },
+    artist: { type: String, required: true, trim: true },
+    artworkUrl: { type: String, default: '', trim: true },
+    durationSec: { type: Number, default: 0 },
+    albumName: { type: String, default: '', trim: true },
+    downloadUrl: { type: [sessionQueueDownloadUrlSchema], default: [] },
+    addedBy: { type: sessionQueueAddedBySchema, required: true },
+    addedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 const activeSessionSchema = new mongoose.Schema(
   {
     hostId: {
@@ -33,6 +70,7 @@ const activeSessionSchema = new mongoose.Schema(
     positionMs: { type: Number, default: 0 },
     listenerCount: { type: Number, default: 0 },
     listeners: { type: [sessionListenerSchema], default: [] },
+    queue: { type: [sessionQueueItemSchema], default: [] },
     visibility: {
       type: String,
       enum: ['nearby', 'private'],
@@ -86,6 +124,35 @@ function mapListeners(listeners) {
   }));
 }
 
+function mapQueue(queue) {
+  if (!Array.isArray(queue)) return [];
+  return queue.map((item) => ({
+    queueItemId: item._id?.toString?.() ?? String(item._id ?? ''),
+    songId: item.songId ?? '',
+    encryptedId: item.encryptedId ?? '',
+    title: item.title ?? '',
+    artist: item.artist ?? '',
+    artworkUrl: item.artworkUrl ?? '',
+    durationSec: Number(item.durationSec) || 0,
+    albumName: item.albumName ?? '',
+    downloadUrl: Array.isArray(item.downloadUrl)
+      ? item.downloadUrl.map((entry) => ({
+          quality: entry.quality ?? '',
+          url: entry.url ?? '',
+        }))
+      : [],
+    addedBy: {
+      userId:
+        item.addedBy?.userId?.toString?.() ?? String(item.addedBy?.userId ?? ''),
+      name: item.addedBy?.name ?? 'Listener',
+      avatar: item.addedBy?.avatar ?? null,
+    },
+    addedAt:
+      item.addedAt?.toISOString?.() ??
+      (item.addedAt ? String(item.addedAt) : new Date().toISOString()),
+  }));
+}
+
 activeSessionSchema.pre('save', function stripLocationOnSave(next) {
   stripInvalidLocation(this);
   next();
@@ -128,11 +195,14 @@ activeSessionSchema.methods.toPublicObject = function toPublicObject() {
     positionMs: this.positionMs,
     listenerCount: this.listenerCount,
     listeners: mapListeners(this.listeners),
+    queue: mapQueue(this.queue),
     visibility: this.visibility ?? 'nearby',
     roomCode: this.roomCode ?? null,
     location: hasValidCoordinates(this.location) ? this.location : undefined,
     updatedAt: this.updatedAt,
   };
 };
+
+export { mapQueue };
 
 export default mongoose.model('ActiveSession', activeSessionSchema);
