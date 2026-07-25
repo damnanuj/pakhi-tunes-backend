@@ -19,6 +19,8 @@ import guestRoutes from './routes/guestRoutes.js';
 import presenceRoutes from './routes/presenceRoutes.js';
 import listeningRoutes from './routes/listeningRoutes.js';
 import playlistRoutes from './routes/playlistRoutes.js';
+import deviceRoutes from './routes/deviceRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
@@ -47,6 +49,8 @@ app.use('/apps', appRoutes);
 app.use('/guests', guestRoutes);
 app.use('/presence', presenceRoutes);
 app.use('/listening', listeningRoutes);
+app.use('/devices', deviceRoutes);
+app.use('/notifications', notificationRoutes);
 
 app.use(errorHandler);
 

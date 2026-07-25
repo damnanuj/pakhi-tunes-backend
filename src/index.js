@@ -7,6 +7,7 @@ import { connectDB } from './config/db.js';
 import { registerSessionSocket } from './sockets/sessionSocket.js';
 import { cleanupInactiveGuests } from './jobs/guestCleanup.js';
 import { runPresenceMinuteJobs } from './jobs/presenceJobs.js';
+import { runNotificationJobs } from './jobs/notificationJobs.js';
 
 const PORT = process.env.PORT || 8000;
 
@@ -50,6 +51,17 @@ if (!isVercel) {
             }
           } catch (error) {
             console.error('[presence] Minute jobs failed:', error);
+          }
+        });
+
+        cron.schedule('* * * * *', async () => {
+          try {
+            const result = await runNotificationJobs();
+            if (result.processed > 0) {
+              console.log('[notifications] Processed scheduled:', result);
+            }
+          } catch (error) {
+            console.error('[notifications] Scheduled job failed:', error);
           }
         });
       });
