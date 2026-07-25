@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import ActiveSession, { mapQueue } from '../models/ActiveSession.js';
 import User from '../models/User.js';
 import { verifyToken } from '../utils/jwt.js';
@@ -36,8 +37,10 @@ function emitListenersUpdate(io, sessionId, session) {
   });
 }
 
-function emitQueueUpdated(io, sessionId, session) {
-  const queue = mapQueue(session.queue);
+function emitQueueUpdated(io, sessionId, queueOrSession) {
+  const queue = Array.isArray(queueOrSession)
+    ? queueOrSession
+    : mapQueue(queueOrSession?.queue);
   io.to(sessionRoom(sessionId)).emit('session:queueUpdated', {
     type: 'QUEUE_UPDATED',
     queue,
@@ -166,109 +169,178 @@ export function registerSessionSocket(io) {
     });
 
     socket.on('host:play', async (payload) => {
-      const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      const session = await getSessionById(sessionId);
-      if (!session) return;
-      session.playing = true;
-      await session.save();
-      socket.to(sessionRoom(sessionId)).emit('session:play', {
-        type: 'PLAY',
-        positionMs: payload?.positionMs ?? session.positionMs,
-        sentAt: Date.now(),
-        repeatMode: payload?.repeatMode,
-      });
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) return;
+
+        const $set = { playing: true };
+        if (payload?.positionMs !== undefined) {
+          $set.positionMs = Math.max(0, Number(payload.positionMs) || 0);
+        }
+
+        const session = await ActiveSession.findByIdAndUpdate(
+          sessionId,
+          { $set },
+          { new: true, projection: { positionMs: 1, playing: 1 } }
+        );
+        if (!session) return;
+
+        socket.to(sessionRoom(sessionId)).emit('session:play', {
+          type: 'PLAY',
+          positionMs: session.positionMs,
+          sentAt: Date.now(),
+          repeatMode: payload?.repeatMode,
+        });
+      } catch (error) {
+        console.error('[session] host:play failed:', error?.message ?? error);
+      }
     });
 
     socket.on('host:pause', async (payload) => {
-      const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      const session = await getSessionById(sessionId);
-      if (!session) return;
-      session.playing = false;
-      if (payload?.positionMs !== undefined) {
-        session.positionMs = Math.max(0, Number(payload.positionMs) || 0);
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) return;
+
+        const $set = { playing: false };
+        if (payload?.positionMs !== undefined) {
+          $set.positionMs = Math.max(0, Number(payload.positionMs) || 0);
+        }
+
+        const session = await ActiveSession.findByIdAndUpdate(
+          sessionId,
+          { $set },
+          { new: true, projection: { positionMs: 1, playing: 1 } }
+        );
+        if (!session) return;
+
+        socket.to(sessionRoom(sessionId)).emit('session:pause', {
+          type: 'PAUSE',
+          positionMs: session.positionMs,
+          sentAt: Date.now(),
+          repeatMode: payload?.repeatMode,
+        });
+      } catch (error) {
+        console.error('[session] host:pause failed:', error?.message ?? error);
       }
-      await session.save();
-      socket.to(sessionRoom(sessionId)).emit('session:pause', {
-        type: 'PAUSE',
-        positionMs: session.positionMs,
-        sentAt: Date.now(),
-        repeatMode: payload?.repeatMode,
-      });
     });
 
     socket.on('host:seek', async (payload) => {
-      const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-      const session = await getSessionById(sessionId);
-      if (!session) return;
-      session.positionMs = positionMs;
-      await session.save();
-      socket.to(sessionRoom(sessionId)).emit('session:seek', {
-        type: 'SEEK',
-        positionMs,
-        sentAt: Date.now(),
-        repeatMode: payload?.repeatMode,
-      });
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) return;
+
+        const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
+        const session = await ActiveSession.findByIdAndUpdate(
+          sessionId,
+          { $set: { positionMs } },
+          { new: true, projection: { positionMs: 1 } }
+        );
+        if (!session) return;
+
+        socket.to(sessionRoom(sessionId)).emit('session:seek', {
+          type: 'SEEK',
+          positionMs,
+          sentAt: Date.now(),
+          repeatMode: payload?.repeatMode,
+        });
+      } catch (error) {
+        console.error('[session] host:seek failed:', error?.message ?? error);
+      }
     });
 
     socket.on('host:trackChange', async (payload) => {
-      const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      const session = await getSessionById(sessionId);
-      if (!session) return;
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) return;
 
-      const clearing = !payload?.trackId;
-      if (clearing) {
-        session.trackId = '';
-        session.trackTitle = '';
-        session.trackArtist = '';
-        session.trackArtwork = '';
-        session.trackUri = '';
-        session.trackDuration = 0;
-        session.positionMs = 0;
-        session.playing = false;
-      } else {
-        if (payload?.trackId) session.trackId = payload.trackId;
-        if (payload?.trackTitle !== undefined) session.trackTitle = payload.trackTitle;
-        if (payload?.trackArtist !== undefined) session.trackArtist = payload.trackArtist;
-        if (payload?.trackArtwork !== undefined) session.trackArtwork = payload.trackArtwork;
-        if (payload?.trackUri !== undefined) session.trackUri = payload.trackUri;
-        if (payload?.trackDuration !== undefined) {
-          session.trackDuration = Number(payload.trackDuration) || 0;
+        const clearing = !payload?.trackId;
+        let $set;
+        let shouldShiftQueue = false;
+
+        if (clearing) {
+          $set = {
+            trackId: '',
+            trackTitle: '',
+            trackArtist: '',
+            trackArtwork: '',
+            trackUri: '',
+            trackDuration: 0,
+            positionMs: 0,
+            playing: false,
+          };
+        } else {
+          const trackId = payload.trackId;
+          $set = {
+            trackId,
+            positionMs: Math.max(0, Number(payload?.positionMs) || 0),
+            playing: payload?.playing !== false,
+          };
+          if (payload?.trackTitle !== undefined) $set.trackTitle = payload.trackTitle;
+          if (payload?.trackArtist !== undefined) $set.trackArtist = payload.trackArtist;
+          if (payload?.trackArtwork !== undefined) {
+            $set.trackArtwork = payload.trackArtwork;
+          }
+          if (payload?.trackUri !== undefined) $set.trackUri = payload.trackUri;
+          if (payload?.trackDuration !== undefined) {
+            $set.trackDuration = Number(payload.trackDuration) || 0;
+          }
+
+          const head = await ActiveSession.findById(sessionId)
+            .select({ queue: { $slice: 1 } })
+            .lean();
+          const nextQueued = head?.queue?.[0];
+          shouldShiftQueue = Boolean(
+            nextQueued?.songId && nextQueued.songId === trackId
+          );
         }
-        session.positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-        session.playing = payload?.playing !== false;
 
-        const nextQueued = session.queue?.[0];
-        if (
-          nextQueued &&
-          nextQueued.songId &&
-          nextQueued.songId === session.trackId
-        ) {
-          session.queue.shift();
+        const update = { $set };
+        if (shouldShiftQueue) {
+          update.$pop = { queue: -1 };
         }
-      }
-      await session.save();
 
-      socket.to(sessionRoom(sessionId)).emit('session:trackChange', {
-        type: 'TRACK_CHANGE',
-        trackId: session.trackId,
-        trackTitle: session.trackTitle,
-        trackArtist: session.trackArtist,
-        trackArtwork: session.trackArtwork,
-        trackUri: session.trackUri,
-        trackDuration: session.trackDuration,
-        positionMs: session.positionMs,
-        playing: session.playing,
-        sentAt: Date.now(),
-        repeatMode: payload?.repeatMode,
-      });
+        const session = await ActiveSession.findByIdAndUpdate(
+          sessionId,
+          update,
+          {
+            new: true,
+            projection: {
+              trackId: 1,
+              trackTitle: 1,
+              trackArtist: 1,
+              trackArtwork: 1,
+              trackUri: 1,
+              trackDuration: 1,
+              positionMs: 1,
+              playing: 1,
+              queue: 1,
+            },
+          }
+        );
+        if (!session) return;
 
-      if (!clearing) {
-        emitQueueUpdated(io, sessionId, session);
+        socket.to(sessionRoom(sessionId)).emit('session:trackChange', {
+          type: 'TRACK_CHANGE',
+          trackId: session.trackId,
+          trackTitle: session.trackTitle,
+          trackArtist: session.trackArtist,
+          trackArtwork: session.trackArtwork,
+          trackUri: session.trackUri,
+          trackDuration: session.trackDuration,
+          positionMs: session.positionMs,
+          playing: session.playing,
+          sentAt: Date.now(),
+          repeatMode: payload?.repeatMode,
+        });
+
+        if (!clearing) {
+          emitQueueUpdated(io, sessionId, session);
+        }
+      } catch (error) {
+        console.error(
+          '[session] host:trackChange failed:',
+          error?.message ?? error
+        );
       }
     });
 
@@ -276,27 +348,50 @@ export function registerSessionSocket(io) {
       try {
         const sessionId = socket.data.sessionId;
         if (socket.data.role !== 'host' || !sessionId) return;
-        const session = await getSessionById(sessionId);
-        if (!session) return;
 
         const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-        session.positionMs = positionMs;
-        if (payload?.playing !== undefined) session.playing = Boolean(payload.playing);
-        if (payload?.trackId) session.trackId = payload.trackId;
-        if (
+        const $set = { positionMs };
+        if (payload?.playing !== undefined) {
+          $set.playing = Boolean(payload.playing);
+        }
+        if (payload?.trackId) {
+          $set.trackId = payload.trackId;
+        }
+
+        const hasCoords =
           payload?.latitude !== undefined &&
           payload?.longitude !== undefined &&
           Number.isFinite(Number(payload.latitude)) &&
-          Number.isFinite(Number(payload.longitude))
-        ) {
-          session.location = {
+          Number.isFinite(Number(payload.longitude));
+
+        if (hasCoords) {
+          $set.location = {
             type: 'Point',
             coordinates: [Number(payload.longitude), Number(payload.latitude)],
           };
-        } else if (session.visibility === 'private') {
-          session.set('location', undefined);
         }
-        await session.save();
+
+        const session = await ActiveSession.findByIdAndUpdate(
+          sessionId,
+          { $set },
+          {
+            new: true,
+            projection: {
+              positionMs: 1,
+              playing: 1,
+              trackId: 1,
+              visibility: 1,
+            },
+          }
+        );
+        if (!session) return;
+
+        if (!hasCoords && session.visibility === 'private') {
+          await ActiveSession.updateOne(
+            { _id: sessionId },
+            { $unset: { location: 1 } }
+          );
+        }
 
         socket.to(sessionRoom(sessionId)).emit('session:heartbeat', {
           type: 'HEARTBEAT',
@@ -327,37 +422,49 @@ export function registerSessionSocket(io) {
           return;
         }
 
-        const session = await getSessionById(sessionId);
-        if (!session || session.visibility !== 'private') {
-          ack?.({ ok: false, error: 'Room not found' });
-          return;
-        }
-
         const queueItemId =
           typeof payload?.queueItemId === 'string'
             ? payload.queueItemId.trim()
             : '';
-        if (!queueItemId) {
+        if (!queueItemId || !mongoose.Types.ObjectId.isValid(queueItemId)) {
           ack?.({ ok: false, error: 'queueItemId is required' });
           return;
         }
 
-        const queue = session.queue ?? [];
-        const index = queue.findIndex(
-          (item) => item._id?.toString?.() === queueItemId
-        );
-        if (index < 0) {
+        const objectId = new mongoose.Types.ObjectId(queueItemId);
+        const before = await ActiveSession.findOne(
+          {
+            _id: sessionId,
+            visibility: 'private',
+            'queue._id': objectId,
+          },
+          { 'queue.$': 1 }
+        ).lean();
+
+        if (!before?.queue?.[0]) {
           ack?.({ ok: false, error: 'Song not found in room queue' });
           return;
         }
 
-        const [removed] = queue.splice(index, 1);
-        session.queue = queue;
-        await session.save();
+        const removed = before.queue[0];
+        const session = await ActiveSession.findOneAndUpdate(
+          {
+            _id: sessionId,
+            visibility: 'private',
+            'queue._id': objectId,
+          },
+          { $pull: { queue: { _id: objectId } } },
+          { new: true, projection: { queue: 1 } }
+        );
+
+        if (!session) {
+          ack?.({ ok: false, error: 'Song not found in room queue' });
+          return;
+        }
 
         const mappedQueue = mapQueue(session.queue);
         const mappedItem = mapQueue([removed])[0] ?? null;
-        emitQueueUpdated(io, sessionId, session);
+        emitQueueUpdated(io, sessionId, mappedQueue);
         ack?.({ ok: true, queue: mappedQueue, item: mappedItem });
       } catch (error) {
         ack?.({
@@ -429,13 +536,28 @@ export function registerSessionSocket(io) {
           return;
         }
 
-        const session = await getSessionById(sessionId);
-        if (!session || session.visibility !== 'private') {
+        const validated = validateQueueAddPayload(payload);
+        if (!validated.ok) {
+          ack?.({ ok: false, error: validated.error });
+          return;
+        }
+
+        const lean = await ActiveSession.findById(sessionId)
+          .select({
+            visibility: 1,
+            trackId: 1,
+            trackUri: 1,
+            listeners: 1,
+            queue: 1,
+          })
+          .lean();
+
+        if (!lean || lean.visibility !== 'private') {
           ack?.({ ok: false, error: 'Room not found' });
           return;
         }
 
-        const isMember = (session.listeners ?? []).some(
+        const isMember = (lean.listeners ?? []).some(
           (listener) => listener.userId.toString() === userId
         );
         if (!isMember) {
@@ -443,7 +565,7 @@ export function registerSessionSocket(io) {
           return;
         }
 
-        if (!session.trackId?.trim() || !session.trackUri?.trim()) {
+        if (!lean.trackId?.trim() || !lean.trackUri?.trim()) {
           ack?.({
             ok: false,
             error: 'Wait for the host to start a song first',
@@ -451,13 +573,7 @@ export function registerSessionSocket(io) {
           return;
         }
 
-        const validated = validateQueueAddPayload(payload);
-        if (!validated.ok) {
-          ack?.({ ok: false, error: validated.error });
-          return;
-        }
-
-        const queue = session.queue ?? [];
+        const queue = lean.queue ?? [];
         if (queue.length >= MAX_ROOM_QUEUE_SIZE) {
           ack?.({ ok: false, error: 'Room queue is full' });
           return;
@@ -468,17 +584,17 @@ export function registerSessionSocket(io) {
           return;
         }
 
-        if (session.trackId === validated.item.songId) {
+        if (lean.trackId === validated.item.songId) {
           ack?.({ ok: false, error: 'That song is already playing' });
           return;
         }
 
         const member =
-          (session.listeners ?? []).find(
+          (lean.listeners ?? []).find(
             (listener) => listener.userId.toString() === userId
           ) ?? null;
 
-        session.queue.push({
+        const queueItem = {
           ...validated.item,
           addedBy: {
             userId,
@@ -486,11 +602,29 @@ export function registerSessionSocket(io) {
             avatar: member?.avatar ?? null,
           },
           addedAt: new Date(),
-        });
-        await session.save();
+        };
+
+        const session = await ActiveSession.findOneAndUpdate(
+          {
+            _id: sessionId,
+            visibility: 'private',
+            'queue.songId': { $ne: validated.item.songId },
+            $expr: { $lt: [{ $size: { $ifNull: ['$queue', []] } }, MAX_ROOM_QUEUE_SIZE] },
+          },
+          { $push: { queue: queueItem } },
+          { new: true, projection: { queue: 1 } }
+        );
+
+        if (!session) {
+          ack?.({
+            ok: false,
+            error: 'Could not add song to room queue',
+          });
+          return;
+        }
 
         const mappedQueue = mapQueue(session.queue);
-        emitQueueUpdated(io, sessionId, session);
+        emitQueueUpdated(io, sessionId, mappedQueue);
         ack?.({ ok: true, queue: mappedQueue });
       } catch (error) {
         ack?.({

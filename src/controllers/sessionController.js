@@ -81,6 +81,19 @@ export const upsertSession = asyncHandler(async (req, res) => {
   success(res, { session: session.toPublicObject() }, 200);
 });
 
+function isRoomCodeDuplicateError(error) {
+  return (
+    error?.code === 11000 &&
+    (error?.keyPattern?.roomCode === 1 ||
+      Boolean(error?.keyValue?.roomCode) ||
+      String(error?.message ?? '').includes('roomCode'))
+  );
+}
+
+function fourDigitRoomCode() {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+}
+
 export const createPrivateRoom = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id);
   if (!user) throw new AppError('User not found', 404);
@@ -97,39 +110,62 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
   } = req.body ?? {};
 
   const existing = await ActiveSession.findOne({ hostId: req.user.id });
-  let roomCode = existing?.visibility === 'private' ? existing.roomCode : null;
+  const preservingPrivate = existing?.visibility === 'private';
+  let roomCode = preservingPrivate ? existing.roomCode : null;
   if (!roomCode) {
     roomCode = await generateUniqueRoomCode();
   }
 
   const hasTrack = Boolean(trackId);
-  const session = await ActiveSession.findOneAndUpdate(
-    { hostId: req.user.id },
-    {
-      $set: {
-        hostId: req.user.id,
-        hostName: user.name,
-        hostAvatar: user.avatar ?? null,
-        trackId: hasTrack ? trackId : '',
-        trackTitle: hasTrack ? (trackTitle ?? '') : '',
-        trackArtist: hasTrack ? (trackArtist ?? '') : '',
-        trackArtwork: hasTrack ? (trackArtwork ?? '') : '',
-        trackUri: hasTrack ? (trackUri ?? '') : '',
-        trackDuration: hasTrack ? Number(trackDuration) || 0 : 0,
-        playing: hasTrack ? playing !== false : false,
-        positionMs: hasTrack ? Math.max(0, Number(positionMs) || 0) : 0,
-        visibility: 'private',
-        roomCode,
-        listeners: existing?.visibility === 'private' ? existing.listeners ?? [] : [],
-        listenerCount:
-          existing?.visibility === 'private' ? existing.listenerCount ?? 0 : 0,
-        queue: [],
-      },
-      $unset: { location: 1 },
-    },
-    // Avoid nested location.type default creating { type: 'Point' } without coordinates
-    { upsert: true, new: true, setDefaultsOnInsert: false }
-  );
+  const $set = {
+    hostId: req.user.id,
+    hostName: user.name,
+    hostAvatar: user.avatar ?? null,
+    trackId: hasTrack ? trackId : '',
+    trackTitle: hasTrack ? (trackTitle ?? '') : '',
+    trackArtist: hasTrack ? (trackArtist ?? '') : '',
+    trackArtwork: hasTrack ? (trackArtwork ?? '') : '',
+    trackUri: hasTrack ? (trackUri ?? '') : '',
+    trackDuration: hasTrack ? Number(trackDuration) || 0 : 0,
+    playing: hasTrack ? playing !== false : false,
+    positionMs: hasTrack ? Math.max(0, Number(positionMs) || 0) : 0,
+    visibility: 'private',
+    roomCode,
+    listeners: preservingPrivate ? existing.listeners ?? [] : [],
+    listenerCount: preservingPrivate ? existing.listenerCount ?? 0 : 0,
+  };
+
+  // Keep the collaborative queue when the same host re-opens an existing private room.
+  // Reset queue only for new rooms or when flipping from nearby → private.
+  if (!preservingPrivate) {
+    $set.queue = [];
+  }
+
+  const updateOptions = {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: false,
+  };
+
+  let session;
+  try {
+    session = await ActiveSession.findOneAndUpdate(
+      { hostId: req.user.id },
+      { $set, $unset: { location: 1 } },
+      updateOptions
+    );
+  } catch (error) {
+    if (!isRoomCodeDuplicateError(error) || preservingPrivate) {
+      throw error;
+    }
+    // Race on roomCode unique index — retry once with a fresh code.
+    $set.roomCode = fourDigitRoomCode();
+    session = await ActiveSession.findOneAndUpdate(
+      { hostId: req.user.id },
+      { $set, $unset: { location: 1 } },
+      updateOptions
+    );
+  }
 
   success(res, { session: session.toPublicObject() }, 200);
 });
@@ -211,6 +247,12 @@ export const updateSessionPosition = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Session not found', 404);
   if (session.hostId.toString() !== req.user.id) {
     throw new AppError('Only the host can update this session', 403);
+  }
+
+  // Private rooms persist playback via socket host:heartbeat — skip REST double-write.
+  if (session.visibility === 'private') {
+    success(res, { session: session.toPublicObject() });
+    return;
   }
 
   const { positionMs, playing, latitude, longitude, trackId } = req.body;
