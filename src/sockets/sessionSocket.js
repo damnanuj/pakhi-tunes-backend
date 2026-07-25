@@ -319,6 +319,54 @@ export function registerSessionSocket(io) {
       socket.data.sessionId = null;
     });
 
+    socket.on('host:queuePlayNow', async (payload, ack) => {
+      try {
+        const sessionId = socket.data.sessionId;
+        if (socket.data.role !== 'host' || !sessionId) {
+          ack?.({ ok: false, error: 'Host a private room first' });
+          return;
+        }
+
+        const session = await getSessionById(sessionId);
+        if (!session || session.visibility !== 'private') {
+          ack?.({ ok: false, error: 'Room not found' });
+          return;
+        }
+
+        const queueItemId =
+          typeof payload?.queueItemId === 'string'
+            ? payload.queueItemId.trim()
+            : '';
+        if (!queueItemId) {
+          ack?.({ ok: false, error: 'queueItemId is required' });
+          return;
+        }
+
+        const queue = session.queue ?? [];
+        const index = queue.findIndex(
+          (item) => item._id?.toString?.() === queueItemId
+        );
+        if (index < 0) {
+          ack?.({ ok: false, error: 'Song not found in room queue' });
+          return;
+        }
+
+        const [removed] = queue.splice(index, 1);
+        session.queue = queue;
+        await session.save();
+
+        const mappedQueue = mapQueue(session.queue);
+        const mappedItem = mapQueue([removed])[0] ?? null;
+        emitQueueUpdated(io, sessionId, session);
+        ack?.({ ok: true, queue: mappedQueue, item: mappedItem });
+      } catch (error) {
+        ack?.({
+          ok: false,
+          error: error?.message ?? 'Could not play queued song',
+        });
+      }
+    });
+
     socket.on('listener:join', async (payload, ack) => {
       try {
         const sessionId = payload?.sessionId;
