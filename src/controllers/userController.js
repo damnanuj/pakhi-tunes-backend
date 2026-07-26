@@ -1,7 +1,7 @@
 import User from '../models/User.js';
 import Favorite from '../models/Favorite.js';
 import PlayHistory from '../models/PlayHistory.js';
-import ActiveSession from '../models/ActiveSession.js';
+import { terminateSessionsByHost } from '../services/sessionLifecycleService.js';
 import { success, successPaginated } from '../utils/apiResponse.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -34,7 +34,7 @@ export const updateDiscoverable = asyncHandler(async (req, res) => {
   await user.save();
 
   if (!discoverable) {
-    await ActiveSession.deleteOne({ hostId: user._id });
+    await terminateSessionsByHost(user._id, { source: 'discoverable-off' });
   }
 
   success(res, { user: user.toSafeObject() });
@@ -86,7 +86,7 @@ export const toggleUserBan = asyncHandler(async (req, res) => {
   await user.save();
 
   if (user.isBanned) {
-    await ActiveSession.deleteOne({ hostId: user._id });
+    await terminateSessionsByHost(user._id, { source: 'user-banned' });
   }
 
   success(res, { user: user.toSafeObject() });
@@ -107,7 +107,7 @@ export const deleteUserAdmin = asyncHandler(async (req, res) => {
   await Promise.all([
     Favorite.deleteMany({ userId }),
     PlayHistory.deleteMany({ userId }),
-    ActiveSession.deleteOne({ hostId: userId }),
+    terminateSessionsByHost(userId, { source: 'user-deleted' }),
     User.deleteOne({ _id: userId }),
   ]);
 

@@ -1,13 +1,14 @@
 import mongoose from 'mongoose';
 import ActiveSession, { mapQueue } from '../models/ActiveSession.js';
 import User from '../models/User.js';
+import {
+  sessionRoom,
+  setSessionIo,
+  terminateSession,
+} from '../services/sessionLifecycleService.js';
 import { verifyToken } from '../utils/jwt.js';
 
 const MAX_ROOM_QUEUE_SIZE = 50;
-
-function sessionRoom(sessionId) {
-  return `session:${sessionId}`;
-}
 
 async function getSessionById(sessionId) {
   if (!sessionId) return null;
@@ -124,18 +125,9 @@ async function removeListenerFromSession(io, session, userId) {
   }
 }
 
-async function endSession(io, sessionId) {
-  const session = await getSessionById(sessionId);
-  if (!session) return;
-
-  io.to(sessionRoom(sessionId)).emit('session:ended', {
-    type: 'SESSION_ENDED',
-    sessionId: session._id.toString(),
-  });
-  await session.deleteOne();
-}
-
 export function registerSessionSocket(io) {
+  setSessionIo(io);
+
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
@@ -422,12 +414,25 @@ export function registerSessionSocket(io) {
       }
     });
 
-    socket.on('host:stop', async () => {
+    socket.on('host:stop', async (_payload, ack) => {
+      // Older clients emit host:stop without a payload; the ack may arrive first.
+      const respond = typeof _payload === 'function' ? _payload : ack;
       const sessionId = socket.data.sessionId;
-      if (socket.data.role !== 'host' || !sessionId) return;
-      await endSession(io, sessionId);
-      socket.data.role = null;
-      socket.data.sessionId = null;
+
+      if (socket.data.role !== 'host' || !sessionId) {
+        respond?.({ ok: false, error: 'Not hosting a session' });
+        return;
+      }
+
+      try {
+        const result = await terminateSession(sessionId, { source: 'socket' });
+        socket.data.role = null;
+        socket.data.sessionId = null;
+        respond?.({ ok: true, sessionId: result.sessionId });
+      } catch (error) {
+        console.error('[session] host:stop failed:', error?.message ?? error);
+        respond?.({ ok: false, error: error?.message ?? 'Failed to stop room' });
+      }
     });
 
     socket.on('host:queuePlayNow', async (payload, ack) => {
@@ -664,7 +669,7 @@ export function registerSessionSocket(io) {
         if (!sessionId) return;
 
         if (socket.data.role === 'host') {
-          await endSession(io, sessionId);
+          await terminateSession(sessionId, { source: 'disconnect' });
           return;
         }
 
@@ -678,5 +683,3 @@ export function registerSessionSocket(io) {
     });
   });
 }
-
-export { endSession };

@@ -1,6 +1,7 @@
 import ActiveSession from '../models/ActiveSession.js';
 import User from '../models/User.js';
 import mongoose from 'mongoose';
+import { terminateSession } from '../services/sessionLifecycleService.js';
 import { success } from '../utils/apiResponse.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -234,11 +235,19 @@ export const getNearbySessions = asyncHandler(async (req, res) => {
 
 export const deleteSession = asyncHandler(async (req, res) => {
   const session = await ActiveSession.findById(req.params.id);
-  if (!session) throw new AppError('Session not found', 404);
+
+  // Idempotent: the socket host:stop path may have already ended and broadcast
+  // this room, and clients call REST as a fallback.
+  if (!session) {
+    success(res, { stopped: true, alreadyStopped: true });
+    return;
+  }
+
   if (session.hostId.toString() !== req.user.id) {
     throw new AppError('Only the host can stop this session', 403);
   }
-  await session.deleteOne();
+
+  await terminateSession(session._id, { source: 'rest' });
   success(res, { stopped: true });
 });
 
