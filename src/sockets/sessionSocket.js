@@ -103,8 +103,24 @@ async function removeListenerFromSession(io, session, userId) {
   );
   session.listenerCount = session.listeners.length;
   if (session.listeners.length !== before || session.listenerCount !== before) {
-    await session.save();
-    emitListenersUpdate(io, session._id.toString(), session);
+    try {
+      // Stale private/nearby docs may have a partial location subdoc; never let
+      // that ValidationError crash the Socket.IO process on Render.
+      if (
+        !session.location?.coordinates ||
+        !Array.isArray(session.location.coordinates) ||
+        session.location.coordinates.length < 2
+      ) {
+        session.set('location', undefined);
+      }
+      await session.save();
+      emitListenersUpdate(io, session._id.toString(), session);
+    } catch (error) {
+      console.error(
+        '[session] removeListenerFromSession save failed:',
+        error?.message ?? error
+      );
+    }
   }
 }
 
@@ -505,6 +521,13 @@ export function registerSessionSocket(io) {
         socket.data.sessionId = sessionId;
         socket.join(sessionRoom(sessionId));
 
+        if (
+          !session.location?.coordinates ||
+          !Array.isArray(session.location.coordinates) ||
+          session.location.coordinates.length < 2
+        ) {
+          session.set('location', undefined);
+        }
         await session.save();
 
         const snapshot = session.toPublicObject();
@@ -512,6 +535,7 @@ export function registerSessionSocket(io) {
 
         emitListenersUpdate(io, sessionId, session);
       } catch (error) {
+        console.error('[session] listener:join failed:', error?.message ?? error);
         ack?.({ ok: false, error: error?.message ?? 'Failed to join session' });
       }
     });
@@ -635,17 +659,21 @@ export function registerSessionSocket(io) {
     });
 
     socket.on('disconnect', async () => {
-      const sessionId = socket.data.sessionId;
-      if (!sessionId) return;
+      try {
+        const sessionId = socket.data.sessionId;
+        if (!sessionId) return;
 
-      if (socket.data.role === 'host') {
-        await endSession(io, sessionId);
-        return;
-      }
+        if (socket.data.role === 'host') {
+          await endSession(io, sessionId);
+          return;
+        }
 
-      if (socket.data.role === 'listener') {
-        const session = await getSessionById(sessionId);
-        await removeListenerFromSession(io, session, userId);
+        if (socket.data.role === 'listener') {
+          const session = await getSessionById(sessionId);
+          await removeListenerFromSession(io, session, userId);
+        }
+      } catch (error) {
+        console.error('[session] disconnect cleanup failed:', error?.message ?? error);
       }
     });
   });

@@ -267,6 +267,12 @@ export const updateSessionPosition = asyncHandler(async (req, res) => {
       type: 'Point',
       coordinates: [coords.longitude, coords.latitude],
     };
+  } else if (
+    session.location &&
+    (!Array.isArray(session.location.coordinates) ||
+      session.location.coordinates.length < 2)
+  ) {
+    session.set('location', undefined);
   }
 
   await session.save();

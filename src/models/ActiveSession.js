@@ -80,15 +80,17 @@ const activeSessionSchema = new mongoose.Schema(
       type: String,
       default: undefined,
     },
-    // Only set when coordinates exist — never leave { type: 'Point' } alone
-    // or the 2dsphere index will crash the process.
+    // Optional GeoJSON point. Never leave { type: 'Point' } without coordinates —
+    // mongoose will fail validation and an uncaught save kills the Node process.
     location: {
       type: {
         type: String,
         enum: ['Point'],
+        required: false,
       },
       coordinates: {
         type: [Number],
+        required: false,
       },
     },
   },
@@ -108,9 +110,15 @@ function hasValidCoordinates(location) {
 function stripInvalidLocation(doc) {
   if (!doc) return;
   if (!hasValidCoordinates(doc.location)) {
-    doc.location = undefined;
+    // Clear before validation — setting undefined alone can leave a partial
+    // { type: 'Point' } subdoc that still fails coordinates required checks.
     if (typeof doc.set === 'function') {
       doc.set('location', undefined);
+    } else {
+      doc.location = undefined;
+    }
+    if (typeof doc.markModified === 'function') {
+      doc.markModified('location');
     }
   }
 }
@@ -153,6 +161,12 @@ function mapQueue(queue) {
   }));
 }
 
+// Must run on validate (not only save) — mongoose validates before pre('save').
+activeSessionSchema.pre('validate', function stripLocationOnValidate(next) {
+  stripInvalidLocation(this);
+  next();
+});
+
 activeSessionSchema.pre('save', function stripLocationOnSave(next) {
   stripInvalidLocation(this);
   next();
@@ -164,11 +178,7 @@ activeSessionSchema.pre('findOneAndUpdate', function stripLocationOnUpdate(next)
 
   if ($set.location && !hasValidCoordinates($set.location)) {
     delete $set.location;
-    if (update.$set) {
-      update.$unset = { ...(update.$unset ?? {}), location: 1 };
-    } else {
-      update.$unset = { ...(update.$unset ?? {}), location: 1 };
-    }
+    update.$unset = { ...(update.$unset ?? {}), location: 1 };
   }
 
   this.setUpdate(update);
