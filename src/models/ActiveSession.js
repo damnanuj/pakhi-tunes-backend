@@ -80,6 +80,16 @@ const activeSessionSchema = new mongoose.Schema(
       type: String,
       default: undefined,
     },
+    // Host socket liveness — rooms survive brief disconnects until the sweeper
+    // sees hostLastSeenAt older than the grace window.
+    hostConnected: { type: Boolean, default: false },
+    hostLastSeenAt: { type: Date, default: Date.now },
+    // Safety-net GC only. Normal ends go through terminateSession (broadcasts
+    // session:ended). Refresh on host activity so long rooms stay alive.
+    expiresAt: {
+      type: Date,
+      default: () => new Date(Date.now() + 6 * 60 * 60 * 1000),
+    },
     // Optional GeoJSON point. Never leave { type: 'Point' } without coordinates —
     // mongoose will fail validation and an uncaught save kills the Node process.
     location: {
@@ -96,6 +106,13 @@ const activeSessionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+/** How far ahead of "now" session safety-net expiry is pushed on activity. */
+export const SESSION_EXPIRES_IN_MS = 6 * 60 * 60 * 1000;
+
+export function sessionExpiryDate(from = Date.now()) {
+  return new Date(from + SESSION_EXPIRES_IN_MS);
+}
 
 function hasValidCoordinates(location) {
   return (
@@ -187,7 +204,10 @@ activeSessionSchema.pre('findOneAndUpdate', function stripLocationOnUpdate(next)
 
 activeSessionSchema.index({ location: '2dsphere' }, { sparse: true });
 activeSessionSchema.index({ roomCode: 1 }, { unique: true, sparse: true });
-activeSessionSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 3600 });
+activeSessionSchema.index({ hostLastSeenAt: 1 });
+// Safety-net GC: Mongo deletes when expiresAt < now. Prefer terminateSession
+// for intentional ends so listeners always get session:ended.
+activeSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 activeSessionSchema.methods.toPublicObject = function toPublicObject() {
   return {
@@ -208,6 +228,8 @@ activeSessionSchema.methods.toPublicObject = function toPublicObject() {
     queue: mapQueue(this.queue),
     visibility: this.visibility ?? 'nearby',
     roomCode: this.roomCode ?? null,
+    hostConnected: Boolean(this.hostConnected),
+    hostLastSeenAt: this.hostLastSeenAt?.toISOString?.() ?? null,
     location: hasValidCoordinates(this.location) ? this.location : undefined,
     updatedAt: this.updatedAt,
   };

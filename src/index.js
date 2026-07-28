@@ -5,6 +5,7 @@ import cron from 'node-cron';
 import app from './app.js';
 import { connectDB } from './config/db.js';
 import { registerSessionSocket } from './sockets/sessionSocket.js';
+import { startHostTimeoutSweeper } from './services/sessionLifecycleService.js';
 import { cleanupInactiveGuests } from './jobs/guestCleanup.js';
 import { runPresenceMinuteJobs } from './jobs/presenceJobs.js';
 import { runNotificationJobs } from './jobs/notificationJobs.js';
@@ -29,6 +30,7 @@ if (!isVercel) {
         transports: ['websocket', 'polling'],
       });
       registerSessionSocket(io);
+      startHostTimeoutSweeper();
 
       httpServer.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);

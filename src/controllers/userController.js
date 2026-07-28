@@ -34,7 +34,11 @@ export const updateDiscoverable = asyncHandler(async (req, res) => {
   await user.save();
 
   if (!discoverable) {
-    await terminateSessionsByHost(user._id, { source: 'discoverable-off' });
+    // Nearby listening only — private rooms stay intact until the host ends them.
+    await terminateSessionsByHost(user._id, {
+      source: 'discoverable-off',
+      visibility: 'nearby',
+    });
   }
 
   success(res, { user: user.toSafeObject() });

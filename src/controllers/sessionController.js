@@ -1,4 +1,4 @@
-import ActiveSession from '../models/ActiveSession.js';
+import ActiveSession, { sessionExpiryDate } from '../models/ActiveSession.js';
 import User from '../models/User.js';
 import mongoose from 'mongoose';
 import { terminateSession } from '../services/sessionLifecycleService.js';
@@ -69,6 +69,9 @@ export const upsertSession = asyncHandler(async (req, res) => {
         playing: playing !== false,
         positionMs: Math.max(0, Number(positionMs) || 0),
         visibility: 'nearby',
+        hostConnected: false,
+        hostLastSeenAt: new Date(),
+        expiresAt: sessionExpiryDate(),
         location: {
           type: 'Point',
           coordinates: [lng, lat],
@@ -118,6 +121,7 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
   }
 
   const hasTrack = Boolean(trackId);
+  const now = new Date();
   const $set = {
     hostId: req.user.id,
     hostName: user.name,
@@ -134,6 +138,9 @@ export const createPrivateRoom = asyncHandler(async (req, res) => {
     roomCode,
     listeners: preservingPrivate ? existing.listeners ?? [] : [],
     listenerCount: preservingPrivate ? existing.listenerCount ?? 0 : 0,
+    hostConnected: false,
+    hostLastSeenAt: now,
+    expiresAt: sessionExpiryDate(now.getTime()),
   };
 
   // Keep the collaborative queue when the same host re-opens an existing private room.

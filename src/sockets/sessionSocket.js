@@ -1,7 +1,12 @@
 import mongoose from 'mongoose';
-import ActiveSession, { mapQueue } from '../models/ActiveSession.js';
+import ActiveSession, {
+  mapQueue,
+  sessionExpiryDate,
+} from '../models/ActiveSession.js';
 import User from '../models/User.js';
 import {
+  emitHostConnection,
+  markHostDisconnected,
   sessionRoom,
   setSessionIo,
   terminateSession,
@@ -9,6 +14,14 @@ import {
 import { verifyToken } from '../utils/jwt.js';
 
 const MAX_ROOM_QUEUE_SIZE = 50;
+
+function bestDownloadUrl(downloadUrl) {
+  if (!Array.isArray(downloadUrl) || downloadUrl.length === 0) return '';
+  const preferred =
+    downloadUrl.find((entry) => /320|160|96|48/.test(String(entry.quality))) ??
+    downloadUrl[downloadUrl.length - 1];
+  return typeof preferred?.url === 'string' ? preferred.url.trim() : '';
+}
 
 async function getSessionById(sessionId) {
   if (!sessionId) return null;
@@ -161,9 +174,22 @@ export function registerSessionSocket(io) {
           return;
         }
 
+        const now = new Date();
+        await ActiveSession.updateOne(
+          { _id: sessionId },
+          {
+            $set: {
+              hostConnected: true,
+              hostLastSeenAt: now,
+              expiresAt: sessionExpiryDate(now.getTime()),
+            },
+          }
+        );
+
         socket.data.role = 'host';
         socket.data.sessionId = sessionId;
         socket.join(sessionRoom(sessionId));
+        emitHostConnection(sessionId, true);
         ack?.({
           ok: true,
           sessionId,
@@ -181,7 +207,7 @@ export function registerSessionSocket(io) {
         const sessionId = socket.data.sessionId;
         if (socket.data.role !== 'host' || !sessionId) return;
 
-        const $set = { playing: true };
+        const $set = { playing: true, hostLastSeenAt: new Date() };
         if (payload?.positionMs !== undefined) {
           $set.positionMs = Math.max(0, Number(payload.positionMs) || 0);
         }
@@ -209,7 +235,7 @@ export function registerSessionSocket(io) {
         const sessionId = socket.data.sessionId;
         if (socket.data.role !== 'host' || !sessionId) return;
 
-        const $set = { playing: false };
+        const $set = { playing: false, hostLastSeenAt: new Date() };
         if (payload?.positionMs !== undefined) {
           $set.positionMs = Math.max(0, Number(payload.positionMs) || 0);
         }
@@ -262,8 +288,9 @@ export function registerSessionSocket(io) {
         if (socket.data.role !== 'host' || !sessionId) return;
 
         const clearing = !payload?.trackId;
+        const now = new Date();
         let $set;
-        let shouldShiftQueue = false;
+        let queuePullSongId = null;
 
         if (clearing) {
           $set = {
@@ -275,6 +302,8 @@ export function registerSessionSocket(io) {
             trackDuration: 0,
             positionMs: 0,
             playing: false,
+            hostLastSeenAt: now,
+            expiresAt: sessionExpiryDate(now.getTime()),
           };
         } else {
           const trackId = payload.trackId;
@@ -282,6 +311,8 @@ export function registerSessionSocket(io) {
             trackId,
             positionMs: Math.max(0, Number(payload?.positionMs) || 0),
             playing: payload?.playing !== false,
+            hostLastSeenAt: now,
+            expiresAt: sessionExpiryDate(now.getTime()),
           };
           if (payload?.trackTitle !== undefined) $set.trackTitle = payload.trackTitle;
           if (payload?.trackArtist !== undefined) $set.trackArtist = payload.trackArtist;
@@ -293,18 +324,22 @@ export function registerSessionSocket(io) {
             $set.trackDuration = Number(payload.trackDuration) || 0;
           }
 
-          const head = await ActiveSession.findById(sessionId)
-            .select({ queue: { $slice: 1 } })
+          // Consume the matching queue item wherever it sits (head OR play-now
+          // from middle). Leaving a stale head was a primary "songs stuck" bug.
+          const lean = await ActiveSession.findById(sessionId)
+            .select({ queue: 1 })
             .lean();
-          const nextQueued = head?.queue?.[0];
-          shouldShiftQueue = Boolean(
-            nextQueued?.songId && nextQueued.songId === trackId
+          const match = (lean?.queue ?? []).find(
+            (item) => item.songId === trackId
           );
+          if (match?.songId) {
+            queuePullSongId = match.songId;
+          }
         }
 
         const update = { $set };
-        if (shouldShiftQueue) {
-          update.$pop = { queue: -1 };
+        if (queuePullSongId) {
+          update.$pull = { queue: { songId: queuePullSongId } };
         }
 
         const session = await ActiveSession.findByIdAndUpdate(
@@ -357,8 +392,14 @@ export function registerSessionSocket(io) {
         const sessionId = socket.data.sessionId;
         if (socket.data.role !== 'host' || !sessionId) return;
 
+        const now = new Date();
         const positionMs = Math.max(0, Number(payload?.positionMs) || 0);
-        const $set = { positionMs };
+        const $set = {
+          positionMs,
+          hostConnected: true,
+          hostLastSeenAt: now,
+          expiresAt: sessionExpiryDate(now.getTime()),
+        };
         if (payload?.playing !== undefined) {
           $set.playing = Boolean(payload.playing);
         }
@@ -468,14 +509,51 @@ export function registerSessionSocket(io) {
         }
 
         const removed = before.queue[0];
+        const trackUri = bestDownloadUrl(removed.downloadUrl);
+        const now = new Date();
+        const positionMs = 0;
+        const playing = true;
+        const trackDurationMs = Math.max(
+          0,
+          (Number(removed.durationSec) || 0) * 1000
+        );
+
         const session = await ActiveSession.findOneAndUpdate(
           {
             _id: sessionId,
             visibility: 'private',
             'queue._id': objectId,
           },
-          { $pull: { queue: { _id: objectId } } },
-          { new: true, projection: { queue: 1 } }
+          {
+            $pull: { queue: { _id: objectId } },
+            $set: {
+              trackId: removed.songId ?? '',
+              trackTitle: removed.title ?? '',
+              trackArtist: removed.artist ?? '',
+              trackArtwork: removed.artworkUrl ?? '',
+              trackUri,
+              trackDuration: trackDurationMs,
+              positionMs,
+              playing,
+              hostConnected: true,
+              hostLastSeenAt: now,
+              expiresAt: sessionExpiryDate(now.getTime()),
+            },
+          },
+          {
+            new: true,
+            projection: {
+              queue: 1,
+              trackId: 1,
+              trackTitle: 1,
+              trackArtist: 1,
+              trackArtwork: 1,
+              trackUri: 1,
+              trackDuration: 1,
+              positionMs: 1,
+              playing: 1,
+            },
+          }
         );
 
         if (!session) {
@@ -486,6 +564,18 @@ export function registerSessionSocket(io) {
         const mappedQueue = mapQueue(session.queue);
         const mappedItem = mapQueue([removed])[0] ?? null;
         emitQueueUpdated(io, sessionId, mappedQueue);
+        socket.to(sessionRoom(sessionId)).emit('session:trackChange', {
+          type: 'TRACK_CHANGE',
+          trackId: session.trackId,
+          trackTitle: session.trackTitle,
+          trackArtist: session.trackArtist,
+          trackArtwork: session.trackArtwork,
+          trackUri: session.trackUri,
+          trackDuration: session.trackDuration,
+          positionMs: session.positionMs,
+          playing: session.playing,
+          sentAt: Date.now(),
+        });
         ack?.({ ok: true, queue: mappedQueue, item: mappedItem });
       } catch (error) {
         ack?.({
@@ -669,7 +759,11 @@ export function registerSessionSocket(io) {
         if (!sessionId) return;
 
         if (socket.data.role === 'host') {
-          await terminateSession(sessionId, { source: 'disconnect' });
+          // Soft disconnect: keep the room alive through brief network/app
+          // background blips. Sweeper ends it if host never returns.
+          await markHostDisconnected(sessionId, {
+            excludingSocketId: socket.id,
+          });
           return;
         }
 
