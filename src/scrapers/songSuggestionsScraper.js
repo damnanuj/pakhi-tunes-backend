@@ -109,17 +109,11 @@ function extractSuggestionSongs(payload, baseUrl, seedSongId, limit) {
   return songs;
 }
 
-/**
- * Fetch radio / recommendation songs for a seed track via JioSaavn webradio.
- * @returns {Promise<object[]>}
- */
-export async function fetchSongSuggestions(baseUrl, songId, limit = DEFAULT_LIMIT) {
+async function fetchAllSongSuggestions(baseUrl, songId) {
   const id = String(songId ?? '').trim();
   if (!baseUrl || !id) return [];
 
-  const safeLimit = Math.max(1, Math.min(MAX_LIMIT, parseInt(limit, 10) || DEFAULT_LIMIT));
-  const cacheKey = `${id}:${safeLimit}`;
-  const cachedSongs = getCachedSongs(cacheKey);
+  const cachedSongs = getCachedSongs(id);
   if (cachedSongs) return cachedSongs;
 
   try {
@@ -128,7 +122,7 @@ export async function fetchSongSuggestions(baseUrl, songId, limit = DEFAULT_LIMI
 
     const url = buildApiUrl(baseUrl, 'webradio.getSong', {
       stationid: stationId,
-      k: safeLimit,
+      k: MAX_LIMIT,
       next: '1',
     });
 
@@ -139,12 +133,36 @@ export async function fetchSongSuggestions(baseUrl, songId, limit = DEFAULT_LIMI
 
     if (!data || data.error) return [];
 
-    const songs = extractSuggestionSongs(data, baseUrl, id, safeLimit);
+    const songs = extractSuggestionSongs(data, baseUrl, id, MAX_LIMIT);
     if (songs.length > 0) {
-      setCachedSongs(cacheKey, songs);
+      setCachedSongs(id, songs);
     }
     return songs;
   } catch {
     return [];
   }
+}
+
+/**
+ * Fetch radio / recommendation songs for a seed track via JioSaavn webradio.
+ * Always fetches up to MAX_LIMIT per song, then slices by offset/limit.
+ * @returns {Promise<{ songs: object[], total: number }>}
+ */
+export async function fetchSongSuggestions(
+  baseUrl,
+  songId,
+  limit = DEFAULT_LIMIT,
+  offset = 0
+) {
+  const id = String(songId ?? '').trim();
+  if (!baseUrl || !id) return { songs: [], total: 0 };
+
+  const safeLimit = Math.max(1, Math.min(MAX_LIMIT, parseInt(limit, 10) || DEFAULT_LIMIT));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+
+  const allSongs = await fetchAllSongSuggestions(baseUrl, id);
+  const total = allSongs.length;
+  const songs = allSongs.slice(safeOffset, safeOffset + safeLimit);
+
+  return { songs, total };
 }
