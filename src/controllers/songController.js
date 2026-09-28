@@ -1,6 +1,5 @@
-import { fetchCatalogSuggestions } from '../scrapers/catalogSearchScraper.js';
+import { searchCatalog } from '../scrapers/catalogSearchScraper.js';
 import { fetchSongByToken } from '../scrapers/songDetailsScraper.js';
-import { searchSongs } from '../scrapers/songSearchScraper.js';
 import { fetchSongSuggestions } from '../scrapers/songSuggestionsScraper.js';
 import { success, successPaginated } from '../utils/apiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -32,46 +31,25 @@ export const getSongsBySearch = asyncHandler(async (req, res) => {
     });
   }
 
-  const isFirstPage = offset === 0;
-  let albums = [];
-  let artists = [];
-  let songs = [];
-  let total = 0;
-
-  if (isFirstPage) {
-    const [suggestionsResult, songsResult] = await Promise.allSettled([
-      fetchCatalogSuggestions(baseUrl, trimmed),
-      searchSongs(baseUrl, trimmed, limit, offset),
-    ]);
-
-    if (suggestionsResult.status === 'fulfilled') {
-      albums = suggestionsResult.value.albums ?? [];
-      artists = suggestionsResult.value.artists ?? [];
-    }
-
-    if (songsResult.status === 'fulfilled') {
-      songs = songsResult.value.songs ?? [];
-      total = songsResult.value.total ?? 0;
-    }
-
-    const suggestionsFailed = suggestionsResult.status === 'rejected';
-    const songsFailed = songsResult.status === 'rejected';
-
-    if (suggestionsFailed && songsFailed) {
-      return res.status(502).json({
-        data: null,
-        error: { message: 'Search unavailable' },
-        isSuccess: false,
-      });
-    }
-  } else {
-    const result = await searchSongs(baseUrl, trimmed, limit, offset);
-    songs = result.songs;
-    total = result.total;
+  try {
+    const result = await searchCatalog(baseUrl, trimmed, limit, offset);
+    const extra =
+      offset === 0
+        ? {
+            top: result.top,
+            albums: result.albums,
+            artists: result.artists,
+            playlists: result.playlists,
+          }
+        : {};
+    successPaginated(res, result.songs, result.total, limit, offset, 200, req, extra);
+  } catch {
+    return res.status(502).json({
+      data: null,
+      error: { message: 'Search unavailable' },
+      isSuccess: false,
+    });
   }
-
-  const extra = isFirstPage ? { albums, artists } : {};
-  successPaginated(res, songs, total, limit, offset, 200, req, extra);
 });
 
 export const getSong = asyncHandler(async (req, res) => {

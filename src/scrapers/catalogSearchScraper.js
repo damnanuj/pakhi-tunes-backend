@@ -1,170 +1,303 @@
 import axios from 'axios';
 import { formatBrowseAlbum } from '../utils/songFormatter.js';
+import { searchSongs } from './songSearchScraper.js';
+import {
+  buildCatalogApiUrl,
+  catalogImageLinks,
+  CATALOG_UA,
+  decodeCatalogHtml,
+} from './catalogScraperShared.js';
 
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const CACHE_TTL_MS = 3 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 80;
+const SIDE_LIMIT = 6;
+const TOP_LIMIT = 3;
+const ALBUM_FETCH_LIMIT = 8;
+const PLAYLIST_FETCH_LIMIT = 20;
 
-const SUGGESTIONS_CACHE_TTL_MS = 3 * 60 * 1000;
-const MAX_SUGGESTIONS_CACHE_ENTRIES = 100;
-const MAX_ROW_ITEMS = 12;
+/** @type {Map<string, { expiresAt: number, payload: object }>} */
+const searchCache = new Map();
 
-/** @type {Map<string, { expiresAt: number, albums: object[], artists: object[] }>} */
-const suggestionsCache = new Map();
+/** @type {Map<string, Promise<object>>} */
+const inFlight = new Map();
 
-function buildApiUrl(baseUrl, call, params) {
-  const url = new URL(`${baseUrl}/api.php`);
-  url.searchParams.set('__call', call);
-  url.searchParams.set('_format', 'json');
-  url.searchParams.set('_marker', '0');
-  url.searchParams.set('api_version', '4');
-  url.searchParams.set('ctx', 'web6dot0');
-  url.searchParams.set('cc', 'in');
-  url.searchParams.set('includeMetaTags', '1');
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined || v === null || v === '') continue;
-    url.searchParams.set(k, String(v));
-  }
-  return url.toString();
+function cleanLabel(text) {
+  const value = decodeCatalogHtml(text);
+  if (!value) return '';
+  if (/saavn|jio/i.test(value)) return '';
+  return value;
 }
 
-function decodeHtml(text) {
-  return String(text ?? '')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
+function capitalize(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function resolveUrl(path, baseUrl) {
-  if (!path) return null;
-  if (path.startsWith('http')) return path;
-  return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+function tokenFromUrl(url, section) {
+  const match = String(url ?? '').match(new RegExp(`/${section}/[^/]+/([^/?]+)`));
+  return match?.[1] ?? '';
 }
 
-function normalizeCacheKey(query) {
-  return String(query ?? '').trim().toLowerCase();
+function queryTokens(query) {
+  return String(query ?? '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
 }
 
-function getCachedSuggestions(cacheKey) {
-  const entry = suggestionsCache.get(cacheKey);
+function albumHaystack(item) {
+  const title = typeof item?.title === 'string' ? item.title : item?.name ?? '';
+  const music = item?.more_info?.music ?? '';
+  return `${title} ${item?.subtitle ?? ''} ${music}`.toLowerCase();
+}
+
+function selectRanked(items, tokens, haystack, fallbackToAll) {
+  const required = tokens.filter((token) => token.length >= 4);
+  const usable = required.length ? required : tokens;
+  if (!usable.length) return items;
+
+  const ranked = items
+    .map((item) => {
+      const hay = haystack(item);
+      const score = usable.filter((token) => hay.includes(token)).length;
+      return { item, score };
+    })
+    .filter((entry) => entry.score > 0);
+
+  if (!ranked.length) return fallbackToAll ? items : [];
+
+  const hasFullMatch = ranked.some((entry) => entry.score === usable.length);
+  const minScore = hasFullMatch
+    ? usable.length
+    : Math.max(...ranked.map((entry) => entry.score));
+
+  return ranked.filter((entry) => entry.score >= minScore).map((entry) => entry.item);
+}
+
+function playlistHaystack(item) {
+  const name = typeof item?.title === 'string' ? item.title : item?.name ?? '';
+  const artists = Array.isArray(item?.more_info?.artist_name)
+    ? item.more_info.artist_name.join(' ')
+    : '';
+  return `${name} ${item?.subtitle ?? ''} ${artists}`.toLowerCase();
+}
+
+function cacheGet(key) {
+  const entry = searchCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    suggestionsCache.delete(cacheKey);
+    searchCache.delete(key);
     return null;
   }
-  return entry;
+  return entry.payload;
 }
 
-function setCachedSuggestions(cacheKey, albums, artists) {
-  if (suggestionsCache.size >= MAX_SUGGESTIONS_CACHE_ENTRIES) {
-    const oldestKey = suggestionsCache.keys().next().value;
-    if (oldestKey) suggestionsCache.delete(oldestKey);
+function cacheSet(key, payload) {
+  if (searchCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = searchCache.keys().next().value;
+    if (oldestKey) searchCache.delete(oldestKey);
   }
-  suggestionsCache.set(cacheKey, {
-    albums,
-    artists,
-    expiresAt: Date.now() + SUGGESTIONS_CACHE_TTL_MS,
+  searchCache.set(key, { payload, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+async function fetchResults(baseUrl, call, query, limit) {
+  const url = buildCatalogApiUrl(baseUrl, call, { q: query, p: 1, n: limit });
+  const { data } = await axios.get(url, {
+    headers: { 'User-Agent': CATALOG_UA },
+    timeout: 15000,
   });
+  if (data?.error) return [];
+  return Array.isArray(data?.results) ? data.results : [];
 }
 
-function extractCategoryList(category) {
-  if (!category) return [];
-  if (Array.isArray(category)) return category;
-  if (Array.isArray(category.data)) return category.data;
-  if (Array.isArray(category.results)) return category.results;
-  return [];
-}
-
-function formatSearchAlbumItem(item, baseUrl) {
-  if (!item?.id) return null;
-
-  const mapped = {
-    ...item,
-    type: 'album',
-    perma_url: item.perma_url ?? item.url ?? null,
-    title: item.title ?? item.name ?? '',
-  };
-
-  const album = formatBrowseAlbum(mapped, baseUrl);
+function formatAlbum(item, baseUrl) {
+  const album = formatBrowseAlbum(
+    { ...item, type: 'album', title: item.title ?? item.name ?? '' },
+    baseUrl
+  );
   if (!album) return null;
+
+  const language = capitalize(item.language);
+  const year = item.year ? String(item.year) : '';
+  const music = cleanLabel(item.more_info?.music || item.subtitle);
+  const kind = language ? `${language} Album` : 'Album';
+  const subtitle = [kind, year, music].filter(Boolean).join(' · ');
 
   return {
     ...album,
-    name: decodeHtml(album.name),
+    encrypted_id: album.encrypted_id ?? tokenFromUrl(item.perma_url, 'album'),
+    name: decodeCatalogHtml(album.name),
+    subtitle,
   };
 }
 
-function formatSearchArtistItem(item, baseUrl) {
-  if (!item?.id) return null;
+function formatArtist(item) {
+  const name = decodeCatalogHtml(typeof item?.name === 'string' ? item.name : item?.title);
+  if (!item?.id || !name) return null;
 
-  const rawUrl = item.perma_url ?? item.url ?? '';
-  const fullUrl =
-    typeof rawUrl === 'string' && rawUrl.startsWith('http')
-      ? rawUrl
-      : resolveUrl(rawUrl, baseUrl);
-  const encrypted_id = fullUrl?.match(/\/artist\/[^/]+\/([^/?]+)/)?.[1] ?? String(item.id);
-
-  let name = item.title?.text ?? (typeof item.title === 'string' ? item.title : '') ?? item.name ?? '';
-  name = decodeHtml(name);
-
-  let image = '';
-  if (typeof item.image === 'string') {
-    image = item.image.replace(/^http:\/\//, 'https://');
-  } else if (Array.isArray(item.image)) {
-    image = item.image[0]?.url?.replace(/^http:\/\//, 'https://') ?? '';
-  } else if (item.image?.url) {
-    image = String(item.image.url).replace(/^http:\/\//, 'https://');
-  }
+  const encrypted_id = tokenFromUrl(item.perma_url, 'artist') || String(item.id);
+  const subtitle = cleanLabel(item.role || item.extra || 'Artist') || 'Artist';
 
   return {
     id: String(item.id),
     encrypted_id,
     name,
-    image,
+    subtitle,
+    image: catalogImageLinks(item.image),
     type: 'artist',
   };
 }
 
-/**
- * Mixed catalog suggestions: albums and artists for a search query.
- * Uses autocomplete.get — same strategy as public search suggestion UI.
- */
-export async function fetchCatalogSuggestions(baseUrl, query) {
-  const q = String(query ?? '').trim();
-  if (!baseUrl || !q) {
-    return { albums: [], artists: [] };
-  }
+function formatPlaylist(item) {
+  const name = decodeCatalogHtml(typeof item?.title === 'string' ? item.title : item?.name);
+  if (!item?.id || !name) return null;
 
-  const cacheKey = normalizeCacheKey(q);
-  const cached = getCachedSuggestions(cacheKey);
-  if (cached) {
-    return { albums: cached.albums, artists: cached.artists };
-  }
+  const count = Number(item.more_info?.song_count ?? item.list_count);
+  const subtitle =
+    Number.isFinite(count) && count > 0
+      ? `${count} ${count === 1 ? 'Song' : 'Songs'}`
+      : cleanLabel(item.subtitle);
 
-  const url = buildApiUrl(baseUrl, 'autocomplete.get', { query: q });
+  return {
+    id: String(item.id),
+    encrypted_id: tokenFromUrl(item.perma_url, 'featured') || String(item.id),
+    name,
+    subtitle,
+    image: catalogImageLinks(item.image),
+    type: 'playlist',
+  };
+}
 
-  const { data } = await axios.get(url, {
-    headers: { 'User-Agent': UA },
-    timeout: 20000,
-  });
-
-  if (data?.error) {
-    return { albums: [], artists: [] };
-  }
-
-  const rawAlbums = extractCategoryList(data?.albums);
-  const rawArtists = extractCategoryList(data?.artists);
-
-  const albums = rawAlbums
-    .map((item) => formatSearchAlbumItem(item, baseUrl))
+function songSubtitle(song) {
+  const artists = (song?.artists?.primary ?? [])
+    .map((artist) => artist?.name)
     .filter(Boolean)
-    .slice(0, MAX_ROW_ITEMS);
+    .join(', ');
+  return artists || song?.album?.name || '';
+}
 
-  const artists = rawArtists
-    .map((item) => formatSearchArtistItem(item, baseUrl))
-    .filter((item) => item?.id && item?.name)
-    .slice(0, MAX_ROW_ITEMS);
+function buildTop(artists, songs) {
+  const top = [];
 
-  setCachedSuggestions(cacheKey, albums, artists);
+  if (artists[0]) {
+    const artist = artists[0];
+    top.push({
+      type: 'artist',
+      id: artist.id,
+      encrypted_id: artist.encrypted_id,
+      name: artist.name,
+      subtitle: artist.subtitle || 'Artist',
+      image: artist.image,
+    });
+  }
 
-  return { albums, artists };
+  for (const song of songs) {
+    if (top.length >= TOP_LIMIT) break;
+    top.push({
+      type: 'song',
+      id: song.id,
+      encrypted_id: song.encrypted_id ?? '',
+      name: song.name,
+      subtitle: songSubtitle(song),
+      image: song.image ?? [],
+    });
+  }
+
+  return top;
+}
+
+async function searchCatalogUncached(baseUrl, query, limit, offset) {
+  const q = String(query ?? '').trim();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+
+  if (safeOffset > 0) {
+    const { songs, total } = await searchSongs(baseUrl, q, safeLimit, safeOffset);
+    return { songs, total, top: [], albums: [], artists: [], playlists: [] };
+  }
+
+  const tokens = queryTokens(q);
+  const [songsResult, albumsResult, artistsResult, playlistsResult] = await Promise.allSettled([
+    searchSongs(baseUrl, q, safeLimit, 0),
+    fetchResults(baseUrl, 'search.getAlbumResults', q, ALBUM_FETCH_LIMIT),
+    fetchResults(baseUrl, 'search.getArtistResults', q, SIDE_LIMIT),
+    fetchResults(baseUrl, 'search.getPlaylistResults', q, PLAYLIST_FETCH_LIMIT),
+  ]);
+
+  if (
+    songsResult.status === 'rejected' &&
+    albumsResult.status === 'rejected' &&
+    artistsResult.status === 'rejected' &&
+    playlistsResult.status === 'rejected'
+  ) {
+    throw songsResult.reason ?? new Error('Search unavailable');
+  }
+
+  const songs = songsResult.status === 'fulfilled' ? songsResult.value.songs ?? [] : [];
+  const total = songsResult.status === 'fulfilled' ? songsResult.value.total ?? songs.length : 0;
+
+  const albums =
+    albumsResult.status === 'fulfilled'
+      ? selectRanked(albumsResult.value, tokens, albumHaystack, true)
+          .map((item) => formatAlbum(item, baseUrl))
+          .filter((item) => item?.id && item?.name)
+          .slice(0, SIDE_LIMIT)
+      : [];
+
+  const artists =
+    artistsResult.status === 'fulfilled'
+      ? artistsResult.value.map(formatArtist).filter(Boolean).slice(0, SIDE_LIMIT)
+      : [];
+
+  const playlists =
+    playlistsResult.status === 'fulfilled'
+      ? selectRanked(playlistsResult.value, tokens, playlistHaystack, false)
+          .map((item) => formatPlaylist(item))
+          .filter(Boolean)
+          .slice(0, SIDE_LIMIT)
+      : [];
+
+  return {
+    songs,
+    total,
+    top: buildTop(artists, songs),
+    albums,
+    artists,
+    playlists,
+  };
+}
+
+/**
+ * Grouped search: playable songs plus albums, artists, and playlists.
+ * First page only. Later pages are songs.
+ */
+export async function searchCatalog(baseUrl, query, limit = 20, offset = 0) {
+  const q = String(query ?? '').trim();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+
+  if (!baseUrl || !q) {
+    return { songs: [], total: 0, top: [], albums: [], artists: [], playlists: [] };
+  }
+
+  const cacheKey = `${q.toLowerCase()}|${safeLimit}|${safeOffset}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  let pending = inFlight.get(cacheKey);
+  if (!pending) {
+    pending = searchCatalogUncached(baseUrl, q, safeLimit, safeOffset)
+      .then((payload) => {
+        cacheSet(cacheKey, payload);
+        return payload;
+      })
+      .finally(() => {
+        inFlight.delete(cacheKey);
+      });
+    inFlight.set(cacheKey, pending);
+  }
+
+  return pending;
 }
