@@ -2,10 +2,6 @@ import AppRelease from '../models/AppRelease.js';
 import { AppError } from './AppError.js';
 import { isLessThan } from './semverCompare.js';
 
-/** Mobile update prompts open the portfolio project page, not the APK URL. */
-export const IN_APP_UPDATE_LANDING_URL =
-  'https://www.damnanuj.com/projects/pakhi-tunes';
-
 export const APP_CONFIG_DEFAULTS = {
   updateAvailable: false,
   forceUpdate: false,
@@ -210,7 +206,7 @@ export function resolvePublicConfig(doc, clientVersion = null) {
     updateAvailable,
     forceUpdate,
     latestVersion: config.latestVersion,
-    downloadUrl: IN_APP_UPDATE_LANDING_URL,
+    downloadUrl: config.downloadUrl ?? '',
     title: forceUpdate ? config.forceUpdateTitle : config.updateTitle,
     message: forceUpdate ? config.forceUpdateMessage : config.updateMessage,
     releaseSections: normalizeReleaseSections(config.releaseSections),
