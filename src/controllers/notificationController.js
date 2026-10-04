@@ -7,6 +7,7 @@ import {
   getNotificationDetail,
   getNotificationStats,
   listNotifications,
+  resendNotification,
   sendNotification,
 } from '../services/notificationService.js';
 
@@ -47,6 +48,8 @@ export const list = asyncHandler(async (req, res) => {
   const { results, count } = await listNotifications({
     status: req.query.status,
     type: req.query.type,
+    audience: req.query.audience,
+    search: req.query.search,
     limit,
     offset,
   });
@@ -83,6 +86,23 @@ export const send = asyncHandler(async (req, res) => {
       ? notification.toSafeObject()
       : notification,
   });
+});
+
+/**
+ * POST /notifications/:id/resend
+ * Send the same content and audience again as a new notification.
+ */
+export const resend = asyncHandler(async (req, res) => {
+  const notification = await resendNotification(req.params.id, req.user.id);
+  return success(
+    res,
+    {
+      notification: notification.toSafeObject
+        ? notification.toSafeObject()
+        : notification,
+    },
+    201
+  );
 });
 
 /**

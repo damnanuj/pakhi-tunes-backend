@@ -9,6 +9,10 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parsePagination(query) {
   const limit = Math.max(1, Math.min(100, parseInt(query.limit, 10) || DEFAULT_LIMIT));
   const offset = Math.max(0, parseInt(query.offset, 10) || DEFAULT_OFFSET);
@@ -50,10 +54,8 @@ export const listUsersAdmin = asyncHandler(async (req, res) => {
 
   const search = req.query.search?.trim();
   if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-    ];
+    const regex = new RegExp(escapeRegex(search.slice(0, 100)), 'i');
+    filter.$or = [{ name: regex }, { email: regex }];
   }
 
   const role = req.query.role?.trim();

@@ -2,9 +2,11 @@ import mongoose from 'mongoose';
 import Notification, {
   ACTION_TYPES,
   AUDIENCE_TYPES,
+  NOTIFICATION_STATUSES,
   NOTIFICATION_TYPES,
 } from '../models/Notification.js';
 import NotificationLog from '../models/NotificationLog.js';
+import User from '../models/User.js';
 import { retrySendToTokens, sendToDevices } from '../integrations/fcm.js';
 import {
   deactivateInvalidTokens,
@@ -14,6 +16,11 @@ import { AppError } from '../utils/AppError.js';
 
 const RETRY_DELAY_MS = 2_000;
 const SENDABLE_STATUSES = new Set(['draft', 'scheduled']);
+const RESENDABLE_STATUSES = new Set(['sent', 'failed', 'cancelled']);
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -255,11 +262,19 @@ export async function sendNotification(notificationId) {
     notification.stats.totalTargets = tokens.length;
 
     if (tokens.length === 0) {
-      notification.status = 'sent';
+      notification.status = 'failed';
       notification.sentAt = new Date();
       notification.stats.sent = 0;
       notification.stats.failed = 0;
       await notification.save();
+      await NotificationLog.create({
+        notificationId: notification._id,
+        batchIndex: 0,
+        totalInBatch: 0,
+        successCount: 0,
+        failureCount: 0,
+        error: 'No active devices matched this audience.',
+      });
       return notification;
     }
 
@@ -385,18 +400,71 @@ export async function deleteNotification(notificationId) {
   return { deleted: true };
 }
 
+async function loadAudienceUsers(userIds = []) {
+  const ids = userIds
+    .map((id) => id?.toString?.() ?? String(id))
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+  if (ids.length === 0) return [];
+
+  const users = await User.find({ _id: { $in: ids } })
+    .select('name email role')
+    .lean();
+  const byId = new Map(users.map((user) => [user._id.toString(), user]));
+
+  return ids.map((id) => {
+    const user = byId.get(id);
+    if (!user) {
+      return { id, name: 'Deleted user', email: '', role: 'user' };
+    }
+    return {
+      id,
+      name: user.name,
+      email: user.email,
+      role: user.role ?? 'user',
+    };
+  });
+}
+
 /**
  * Paginated notification list for admin history.
+ * Search matches title, body, and targeted user name/email, and combines
+ * with status, type, and audience filters (including "all").
  */
 export async function listNotifications({
   status,
   type,
+  audience,
+  search,
   limit = 20,
   offset = 0,
 } = {}) {
   const filter = {};
-  if (status) filter.status = status;
-  if (type) filter.type = type;
+  if (status && NOTIFICATION_STATUSES.includes(status)) filter.status = status;
+  if (type && NOTIFICATION_TYPES.includes(type)) filter.type = type;
+
+  if (audience === 'specific') {
+    filter['audience.type'] = { $in: ['single_user', 'multiple_users'] };
+  } else if (audience && AUDIENCE_TYPES.includes(audience)) {
+    filter['audience.type'] = audience;
+  }
+
+  const query = typeof search === 'string' ? search.trim().slice(0, 100) : '';
+  if (query) {
+    const regex = new RegExp(escapeRegex(query), 'i');
+    const matchedUsers = await User.find({
+      $or: [{ name: regex }, { email: regex }],
+    })
+      .select('_id')
+      .limit(50)
+      .lean();
+    const matchedIds = matchedUsers.map((user) => user._id);
+    filter.$or = [
+      { title: regex },
+      { body: regex },
+      ...(matchedIds.length ? [{ 'audience.userIds': { $in: matchedIds } }] : []),
+    ];
+  }
 
   const [results, count] = await Promise.all([
     Notification.find(filter)
@@ -462,6 +530,11 @@ export async function getNotificationDetail(notificationId) {
     .sort({ batchIndex: 1, createdAt: 1 })
     .lean();
 
+  const audienceUserIds = (notification.audience?.userIds ?? []).map(
+    (id) => id?.toString?.() ?? String(id)
+  );
+  const audienceUsers = await loadAudienceUsers(audienceUserIds);
+
   return {
     id: notification._id.toString(),
     title: notification.title,
@@ -491,6 +564,7 @@ export async function getNotificationDetail(notificationId) {
       : null,
     stats: notification.stats ?? { totalTargets: 0, sent: 0, failed: 0, delivered: 0 },
     metadata: notification.metadata ?? {},
+    audienceUsers,
     createdAt: notification.createdAt,
     updatedAt: notification.updatedAt,
     logs: logs.map((log) => ({
@@ -545,6 +619,52 @@ export async function getNotificationStats() {
 }
 
 /**
+ * Send the same notification again as a new delivery.
+ * The original record stays in history.
+ */
+export async function resendNotification(notificationId, adminUserId) {
+  if (!mongoose.Types.ObjectId.isValid(notificationId)) {
+    throw new AppError('Invalid notification id', 400);
+  }
+  if (!adminUserId) {
+    throw new AppError('Admin user is required', 401);
+  }
+
+  const source = await Notification.findById(notificationId);
+  if (!source) {
+    throw new AppError('Notification not found', 404);
+  }
+
+  if (!RESENDABLE_STATUSES.has(source.status)) {
+    throw new AppError(
+      `Cannot send again while status is "${source.status}"`,
+      409
+    );
+  }
+
+  const plain = source.toObject();
+  const clone = await Notification.create({
+    title: plain.title,
+    body: plain.body,
+    imageUrl: plain.imageUrl ?? null,
+    type: plain.type,
+    actionType: plain.actionType,
+    actionPayload: plain.actionPayload ?? {},
+    audience: {
+      type: plain.audience?.type ?? 'all',
+      userIds: plain.audience?.userIds ?? [],
+      filters: plain.audience?.filters ?? null,
+    },
+    priority: plain.priority === 'high' ? 'high' : 'normal',
+    status: 'draft',
+    createdBy: adminUserId,
+    metadata: { retriedFrom: source._id.toString() },
+  });
+
+  return sendNotification(clone._id.toString());
+}
+
+/**
  * Cron job: send due scheduled notifications.
  */
 export async function processScheduledNotifications() {
@@ -562,7 +682,11 @@ export async function processScheduledNotifications() {
   for (const notification of due) {
     try {
       const sent = await sendNotification(notification._id.toString());
-      results.push({ id: sent._id.toString(), status: sent.status, ok: true });
+      results.push({
+        id: sent._id.toString(),
+        status: sent.status,
+        ok: sent.status === 'sent',
+      });
     } catch (error) {
       console.error(
         `[notifications] Failed to send scheduled ${notification._id}:`,
