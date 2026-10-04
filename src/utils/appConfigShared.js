@@ -1,6 +1,6 @@
 import AppRelease from '../models/AppRelease.js';
 import { AppError } from './AppError.js';
-import { isLessThan } from './semverCompare.js';
+import { compareVersions, isLessThan } from './semverCompare.js';
 
 /** In-app update Download always opens this page. The APK URL stays on the portfolio listing. */
 export const IN_APP_UPDATE_PAGE_URL =
@@ -178,12 +178,17 @@ function resolveUpdateFlags(config, clientVersion) {
     };
   }
 
+  const latestVersion = normalized.latestVersion;
+  const minSupportedVersion = normalized.minSupportedVersion;
+
+  const vsLatest = compareVersions(clientVersion, latestVersion);
+  if (vsLatest === 0 || vsLatest === 1) {
+    return { forceUpdate: false, updateAvailable: false };
+  }
+
   if (normalized.forceUpdate) {
     return { forceUpdate: true, updateAvailable: false };
   }
-
-  const latestVersion = normalized.latestVersion;
-  const minSupportedVersion = normalized.minSupportedVersion;
 
   if (isLessThan(clientVersion, minSupportedVersion)) {
     return { forceUpdate: true, updateAvailable: false };
