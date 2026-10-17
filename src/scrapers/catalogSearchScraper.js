@@ -102,14 +102,29 @@ function cacheSet(key, payload) {
   searchCache.set(key, { payload, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
-async function fetchResults(baseUrl, call, query, limit) {
-  const url = buildCatalogApiUrl(baseUrl, call, { q: query, p: 1, n: limit });
+async function fetchResults(baseUrl, call, query, limit, offset = 0) {
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+  const page = Math.floor(safeOffset / safeLimit) + 1;
+
+  const url = buildCatalogApiUrl(baseUrl, call, { q: query, p: page, n: safeLimit });
   const { data } = await axios.get(url, {
     headers: { 'User-Agent': CATALOG_UA },
     timeout: 15000,
   });
-  if (data?.error) return [];
-  return Array.isArray(data?.results) ? data.results : [];
+  if (data?.error) return { results: [], total: 0 };
+
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const reportedTotal = Number(data?.total);
+  let total = Number.isFinite(reportedTotal) && reportedTotal >= 0 ? reportedTotal : 0;
+  if (total === 0 && results.length > 0) {
+    total =
+      results.length < safeLimit
+        ? safeOffset + results.length
+        : safeOffset + results.length + safeLimit;
+  }
+
+  return { results, total };
 }
 
 function formatAlbum(item, baseUrl) {
@@ -240,7 +255,7 @@ async function searchCatalogUncached(baseUrl, query, limit, offset) {
 
   const albums =
     albumsResult.status === 'fulfilled'
-      ? selectRanked(albumsResult.value, tokens, albumHaystack, true)
+      ? selectRanked(albumsResult.value.results, tokens, albumHaystack, true)
           .map((item) => formatAlbum(item, baseUrl))
           .filter((item) => item?.id && item?.name)
           .slice(0, SIDE_LIMIT)
@@ -248,12 +263,12 @@ async function searchCatalogUncached(baseUrl, query, limit, offset) {
 
   const artists =
     artistsResult.status === 'fulfilled'
-      ? artistsResult.value.map(formatArtist).filter(Boolean).slice(0, SIDE_LIMIT)
+      ? artistsResult.value.results.map(formatArtist).filter(Boolean).slice(0, SIDE_LIMIT)
       : [];
 
   const playlists =
     playlistsResult.status === 'fulfilled'
-      ? selectRanked(playlistsResult.value, tokens, playlistHaystack, false)
+      ? selectRanked(playlistsResult.value.results, tokens, playlistHaystack, false)
           .map((item) => formatPlaylist(item))
           .filter(Boolean)
           .slice(0, SIDE_LIMIT)
@@ -267,6 +282,88 @@ async function searchCatalogUncached(baseUrl, query, limit, offset) {
     artists,
     playlists,
   };
+}
+
+const CATEGORY_CALLS = {
+  albums: 'search.getAlbumResults',
+  artists: 'search.getArtistResults',
+  playlists: 'search.getPlaylistResults',
+};
+
+async function searchCategoryUncached(baseUrl, query, type, limit, offset) {
+  const q = String(query ?? '').trim();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+  const call = CATEGORY_CALLS[type];
+  if (!call) {
+    return { results: [], total: 0 };
+  }
+
+  const { results: raw, total: rawTotal } = await fetchResults(
+    baseUrl,
+    call,
+    q,
+    safeLimit,
+    safeOffset
+  );
+
+  const tokens = queryTokens(q);
+  let list = raw;
+
+  if (type === 'albums') {
+    list = selectRanked(raw, tokens, albumHaystack, true);
+  } else if (type === 'playlists') {
+    list = selectRanked(raw, tokens, playlistHaystack, true);
+  }
+
+  const formatters = {
+    albums: (item) => formatAlbum(item, baseUrl),
+    artists: (item) => formatArtist(item),
+    playlists: (item) => formatPlaylist(item),
+  };
+
+  const results = list.map(formatters[type]).filter(Boolean);
+  let total = rawTotal;
+  if (total === 0 && results.length > 0) {
+    total =
+      results.length < safeLimit
+        ? safeOffset + results.length
+        : safeOffset + results.length + safeLimit;
+  }
+
+  return { results, total };
+}
+
+/**
+ * Paginated search for a single category (albums, artists, playlists).
+ */
+export async function searchCategory(baseUrl, query, type, limit = 20, offset = 0) {
+  const q = String(query ?? '').trim();
+  const safeLimit = Math.max(1, Math.min(50, parseInt(limit, 10) || 20));
+  const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+
+  if (!baseUrl || !q || !CATEGORY_CALLS[type]) {
+    return { results: [], total: 0 };
+  }
+
+  const cacheKey = `${type}|${q.toLowerCase()}|${safeLimit}|${safeOffset}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  let pending = inFlight.get(cacheKey);
+  if (!pending) {
+    pending = searchCategoryUncached(baseUrl, q, type, safeLimit, safeOffset)
+      .then((payload) => {
+        cacheSet(cacheKey, payload);
+        return payload;
+      })
+      .finally(() => {
+        inFlight.delete(cacheKey);
+      });
+    inFlight.set(cacheKey, pending);
+  }
+
+  return pending;
 }
 
 /**

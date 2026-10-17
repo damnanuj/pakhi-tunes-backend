@@ -25,6 +25,39 @@ export const getUser = asyncHandler(async (req, res) => {
   success(res, user.toSafeObject());
 });
 
+const AUDIO_QUALITIES = ['96kbps', '160kbps', '320kbps'];
+
+export const updatePreferences = asyncHandler(async (req, res) => {
+  const hasStream = Object.prototype.hasOwnProperty.call(req.body, 'streamQuality');
+  const hasDownload = Object.prototype.hasOwnProperty.call(req.body, 'downloadQuality');
+
+  if (!hasStream && !hasDownload) {
+    throw new AppError('streamQuality or downloadQuality is required', 400);
+  }
+
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found', 404);
+
+  if (hasStream) {
+    const { streamQuality } = req.body;
+    if (!AUDIO_QUALITIES.includes(streamQuality)) {
+      throw new AppError('Invalid streamQuality', 400);
+    }
+    user.streamQuality = streamQuality;
+  }
+
+  if (hasDownload) {
+    const { downloadQuality } = req.body;
+    if (downloadQuality !== null && !AUDIO_QUALITIES.includes(downloadQuality)) {
+      throw new AppError('Invalid downloadQuality', 400);
+    }
+    user.downloadQuality = downloadQuality;
+  }
+
+  await user.save();
+  success(res, { user: user.toSafeObject() });
+});
+
 export const updateDiscoverable = asyncHandler(async (req, res) => {
   const { discoverable } = req.body;
   if (typeof discoverable !== 'boolean') {

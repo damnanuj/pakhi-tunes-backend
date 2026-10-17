@@ -5,6 +5,7 @@ import {
   listUsersAdmin,
   toggleUserBan,
   updateDiscoverable,
+  updatePreferences,
 } from '../controllers/userController.js';
 import { auth } from '../middlewares/auth.js';
 import { ensureDbConnection } from '../middlewares/ensureDbConnection.js';
@@ -16,6 +17,7 @@ const router = Router();
 router.use(ensureDbConnection);
 
 router.patch('/me/discoverable', auth, updateDiscoverable);
+router.patch('/me/preferences', auth, updatePreferences);
 router.get('/admin/list', auth, requireAdmin, listUsersAdmin);
 router.patch('/:id/ban', auth, requireAdmin, toggleUserBan);
 router.delete('/:id', auth, requireAdmin, deleteUserAdmin);

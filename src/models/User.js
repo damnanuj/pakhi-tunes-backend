@@ -14,6 +14,16 @@ const userSchema = new mongoose.Schema(
     },
     avatar: { type: String, default: null },
     discoverable: { type: Boolean, default: false },
+    streamQuality: {
+      type: String,
+      enum: ['96kbps', '160kbps', '320kbps'],
+      default: '320kbps',
+    },
+    downloadQuality: {
+      type: String,
+      enum: ['96kbps', '160kbps', '320kbps', null],
+      default: null,
+    },
     role: {
       type: String,
       enum: ['user', 'admin'],
@@ -56,6 +66,8 @@ userSchema.methods.toSafeObject = function toSafeObject() {
     email: this.email,
     avatar: this.avatar ?? null,
     discoverable: Boolean(this.discoverable),
+    streamQuality: this.streamQuality ?? '320kbps',
+    downloadQuality: this.downloadQuality ?? null,
     role: this.role ?? 'user',
     isAdmin: this.role === 'admin',
     isBanned: Boolean(this.isBanned),

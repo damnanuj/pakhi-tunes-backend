@@ -1,4 +1,4 @@
-import { searchCatalog } from '../scrapers/catalogSearchScraper.js';
+import { searchCatalog, searchCategory } from '../scrapers/catalogSearchScraper.js';
 import { fetchSongByToken } from '../scrapers/songDetailsScraper.js';
 import { fetchSongSuggestions } from '../scrapers/songSuggestionsScraper.js';
 import { success, successPaginated } from '../utils/apiResponse.js';
@@ -31,7 +31,22 @@ export const getSongsBySearch = asyncHandler(async (req, res) => {
     });
   }
 
+  const type = String(req.query.type ?? '').trim().toLowerCase();
+  const categoryTypes = ['albums', 'artists', 'playlists'];
+
   try {
+    if (categoryTypes.includes(type)) {
+      const { results, total } = await searchCategory(
+        baseUrl,
+        trimmed,
+        type,
+        limit,
+        offset
+      );
+      successPaginated(res, results, total, limit, offset, 200, req);
+      return;
+    }
+
     const result = await searchCatalog(baseUrl, trimmed, limit, offset);
     const extra =
       offset === 0
