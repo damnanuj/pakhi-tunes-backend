@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import User from "../models/User.js";
 
 let cached = global.mongoose;
 
@@ -35,5 +36,10 @@ export const connectDB = async () => {
 
   const conn = await cached.promise;
   console.log("MongoDB connected");
+  try {
+    await User.repairGoogleUidIndex();
+  } catch (error) {
+    console.error("[db] Failed to repair googleUid index", error?.message ?? error);
+  }
   return conn;
 };

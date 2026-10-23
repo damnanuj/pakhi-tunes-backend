@@ -38,7 +38,6 @@ const userSchema = new mongoose.Schema(
     },
     googleUid: {
       type: String,
-      default: null,
       trim: true,
       sparse: true,
       unique: true,
@@ -57,6 +56,20 @@ userSchema.methods.comparePassword = function comparePassword(plainPassword) {
 
 userSchema.statics.hashPassword = async function hashPassword(plainPassword) {
   return bcrypt.hash(plainPassword, 12);
+};
+
+userSchema.statics.repairGoogleUidIndex = async function repairGoogleUidIndex() {
+  await this.updateMany({ googleUid: null }, { $unset: { googleUid: 1 } });
+
+  const indexes = await this.collection.indexes();
+  const googleIndex = indexes.find((index) => index.key?.googleUid === 1);
+  if (!googleIndex || googleIndex.sparse === true) return;
+
+  await this.collection.dropIndex(googleIndex.name);
+  await this.collection.createIndex(
+    { googleUid: 1 },
+    { unique: true, sparse: true, name: 'googleUid_1' }
+  );
 };
 
 userSchema.methods.toSafeObject = function toSafeObject() {
