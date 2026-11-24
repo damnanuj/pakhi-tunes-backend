@@ -23,14 +23,26 @@ import catalogPlaylistRoutes from './routes/catalogPlaylistRoutes.js';
 import deviceRoutes from './routes/deviceRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
+import { limiters, routeLimits } from './middlewares/rateLimit.js';
 
 const app = express();
+
+// Behind Vercel / a reverse proxy, req.ip must be the client, not the proxy.
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
 app.use(helmet());
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Global per-IP ceiling for every route (see middlewares/rateLimit.js).
+app.use(limiters.global);
+
+// Per-group limiters, mounted before the routers they protect.
+for (const [prefix, chain] of routeLimits) {
+  app.use(prefix, ...chain);
+}
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/auth', authRoutes);

@@ -12,15 +12,11 @@ import {
 import { auth } from '../middlewares/auth.js';
 import { ensureDbConnection } from '../middlewares/ensureDbConnection.js';
 import { requireAdmin } from '../middlewares/requireAdmin.js';
-import { createRateLimiter } from '../middlewares/rateLimit.js';
+import { limiters } from '../middlewares/rateLimit.js';
 
 const router = Router();
 
-const notificationSendLimiter = createRateLimiter({
-  maxRequests: 10,
-  windowMs: 60_000,
-  message: 'Notification send rate limit exceeded. Max 10 per minute.',
-});
+const notificationSendLimiter = limiters.notificationSend;
 
 router.use(ensureDbConnection);
 router.use(auth, requireAdmin);
