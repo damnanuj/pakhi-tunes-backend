@@ -25,6 +25,7 @@ const userSongStatsSchema = new mongoose.Schema(
 userSongStatsSchema.index({ userId: 1, songId: 1 }, { unique: true });
 userSongStatsSchema.index({ userId: 1, totalListenedMs: -1 });
 userSongStatsSchema.index({ songId: 1, totalListenedMs: -1 });
+userSongStatsSchema.index({ lastPlayedAt: -1 });
 
 userSongStatsSchema.methods.toSafeObject = function toSafeObject() {
   return {

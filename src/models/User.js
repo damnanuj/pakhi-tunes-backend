@@ -47,6 +47,8 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+userSchema.index({ createdAt: 1 });
+
 userSchema.methods.comparePassword = function comparePassword(plainPassword) {
   if (!this.passwordHash) {
     return Promise.resolve(false);

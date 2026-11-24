@@ -3,14 +3,21 @@ import AppUsageDay from '../models/AppUsageDay.js';
 import Guest from '../models/Guest.js';
 import PresenceSession from '../models/PresenceSession.js';
 import User from '../models/User.js';
+import ListeningDay from '../models/ListeningDay.js';
 import UserSongStats from '../models/UserSongStats.js';
 import { getIstDayBounds, getIstDayKey } from '../utils/istDayKey.js';
+import { resolveReportRange } from '../utils/reportRange.js';
 import { LIVE_WINDOW_MS } from './presenceService.js';
 import { normalizeDeviceId } from './guestService.js';
 
 export const GUEST_LISTENING_LIMIT_MS = 120 * 60 * 1000;
 
 const MIN_LISTENED_MS = 1000;
+
+function activityBounds(range) {
+  const { start, end } = resolveReportRange(range);
+  return { $gte: start, $lt: end };
+}
 
 function clampListenedMs(value) {
   const parsed = Number(value);
@@ -126,6 +133,15 @@ async function upsertUserSongStats(userId, payload) {
   return entry;
 }
 
+async function recordListeningDay(listenedMs) {
+  const dayKey = getIstDayKey();
+  await ListeningDay.updateOne(
+    { dayKey },
+    { $inc: { listenedMs, playCount: 1 }, $setOnInsert: { dayKey } },
+    { upsert: true }
+  );
+}
+
 async function incrementGuestListening(deviceId, listenedMs) {
   const guest = await Guest.findOneAndUpdate(
     { deviceId },
@@ -176,7 +192,10 @@ export async function reportListening({
   }
 
   if (userId) {
-    await upsertUserSongStats(userId, payload);
+    await Promise.all([
+      upsertUserSongStats(userId, payload),
+      recordListeningDay(payload.listenedMs),
+    ]);
     return {
       recorded: true,
       guestRemainingMs: null,
@@ -192,7 +211,10 @@ export async function reportListening({
     };
   }
 
-  const guest = await incrementGuestListening(normalizedDeviceId, payload.listenedMs);
+  const [, guest] = await Promise.all([
+    recordListeningDay(payload.listenedMs),
+    incrementGuestListening(normalizedDeviceId, payload.listenedMs),
+  ]);
   const guestTotalListenedMs = guest?.totalListenedMs ?? payload.listenedMs;
   const guestRemainingMs = Math.max(
     0,
@@ -220,7 +242,10 @@ export async function getUserSongStats(userId, options = {}) {
     _id: 1,
   };
 
-  const filter = { userId: new mongoose.Types.ObjectId(userId) };
+  const filter = {
+    userId: new mongoose.Types.ObjectId(userId),
+    lastPlayedAt: activityBounds(options.range),
+  };
   const search = options.search?.trim();
   if (search) {
     const pattern = new RegExp(escapeRegex(search), 'i');
@@ -241,7 +266,7 @@ export async function getUserSongStats(userId, options = {}) {
   };
 }
 
-export async function getUserListeningSummary(userId) {
+export async function getUserListeningSummary(userId, options = {}) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
     return null;
   }
@@ -252,7 +277,7 @@ export async function getUserListeningSummary(userId) {
   }
 
   const [aggregate] = await UserSongStats.aggregate([
-    { $match: { userId: user._id } },
+    { $match: { userId: user._id, lastPlayedAt: activityBounds(options.range) } },
     {
       $group: {
         _id: null,
@@ -292,6 +317,7 @@ export async function listUsersWithListeningStats(options = {}) {
     : null;
 
   const basePipeline = [
+    { $match: { lastPlayedAt: activityBounds(options.range) } },
     {
       $group: {
         _id: '$userId',
@@ -343,7 +369,10 @@ export async function listUsersWithListeningStats(options = {}) {
 export async function listGuestsWithListeningStats(options = {}) {
   const { limit, offset } = listWindow(options);
   const search = options.search?.trim();
-  const filter = { totalListenedMs: { $gt: 0 } };
+  const filter = {
+    totalListenedMs: { $gt: 0 },
+    lastActiveAt: activityBounds(options.range),
+  };
 
   if (search) {
     filter.deviceId = { $regex: escapeRegex(search), $options: 'i' };
@@ -405,6 +434,7 @@ export async function getSongPopularity(options = {}) {
 
   const [results, countResult] = await Promise.all([
     UserSongStats.aggregate([
+      { $match: { lastPlayedAt: activityBounds(options.range) } },
       {
         $group: {
           _id: '$songId',
@@ -434,6 +464,7 @@ export async function getSongPopularity(options = {}) {
       { $limit: limit },
     ]),
     UserSongStats.aggregate([
+      { $match: { lastPlayedAt: activityBounds(options.range) } },
       { $group: { _id: '$songId' } },
       { $count: 'count' },
     ]),
@@ -447,7 +478,10 @@ export async function getSongPopularity(options = {}) {
 
 export async function getSongListeners(songId, options = {}) {
   const { limit, offset } = listWindow(options);
-  const filter = { songId: String(songId).trim() };
+  const filter = {
+    songId: String(songId).trim(),
+    lastPlayedAt: activityBounds(options.range),
+  };
 
   const [entries, count] = await Promise.all([
     UserSongStats.find(filter)

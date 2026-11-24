@@ -255,8 +255,9 @@ export const routeLimits = [
   ['/app-releases', [limiters.publicRead, limiters.adminWrite]],
   ['/apps', [limiters.appsPublic]],
   ['/guests', [limiters.guestPing, limiters.userRead, limiters.userWrite]],
-  ['/presence', [limiters.presenceTelemetry, limiters.userRead]],
+  ['/presence', [limiters.presenceTelemetry]],
   ['/listening', [limiters.listeningReport, limiters.userRead]],
+  ['/dashboard', [limiters.userRead]],
   ['/devices', [limiters.anonDevices, limiters.userRead]],
   ['/notifications', [limiters.userRead, limiters.userWrite]],
 ];

@@ -18,6 +18,7 @@ import appRoutes from './routes/appRoutes.js';
 import guestRoutes from './routes/guestRoutes.js';
 import presenceRoutes from './routes/presenceRoutes.js';
 import listeningRoutes from './routes/listeningRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
 import playlistRoutes from './routes/playlistRoutes.js';
 import catalogPlaylistRoutes from './routes/catalogPlaylistRoutes.js';
 import deviceRoutes from './routes/deviceRoutes.js';
@@ -63,6 +64,7 @@ app.use('/apps', appRoutes);
 app.use('/guests', guestRoutes);
 app.use('/presence', presenceRoutes);
 app.use('/listening', listeningRoutes);
+app.use('/dashboard', dashboardRoutes);
 app.use('/devices', deviceRoutes);
 app.use('/notifications', notificationRoutes);
 

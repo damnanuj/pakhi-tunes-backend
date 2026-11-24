@@ -28,6 +28,8 @@ const guestSchema = new mongoose.Schema(
 );
 
 guestSchema.index({ status: 1, convertedUserId: 1 });
+guestSchema.index({ createdAt: 1 });
+guestSchema.index({ convertedAt: 1 });
 
 guestSchema.methods.toSafeObject = function toSafeObject() {
   return {

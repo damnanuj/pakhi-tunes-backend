@@ -216,29 +216,3 @@ export async function sampleLivePeakForToday(now = new Date()) {
     peakAt: day.peakAt,
   };
 }
-
-export async function getTodayStats(now = new Date()) {
-  const dayKey = getIstDayKey(now);
-  const [liveCount, day] = await Promise.all([
-    getLiveCount(now),
-    ensureUsageDay(dayKey),
-  ]);
-
-  return {
-    liveCount,
-    sampledAt: now.toISOString(),
-    day: day.toSafeObject(),
-  };
-}
-
-export async function listUsageStats(fromDayKey, toDayKey) {
-  const filter = {};
-  if (fromDayKey || toDayKey) {
-    filter.dayKey = {};
-    if (fromDayKey) filter.dayKey.$gte = fromDayKey;
-    if (toDayKey) filter.dayKey.$lte = toDayKey;
-  }
-
-  const days = await AppUsageDay.find(filter).sort({ dayKey: -1 }).limit(30);
-  return days.map((day) => day.toSafeObject());
-}

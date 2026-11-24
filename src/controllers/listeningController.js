@@ -86,6 +86,7 @@ export const listListeningUsers = asyncHandler(async (req, res) => {
     search: req.query.search,
     sort: req.query.sort,
     dir: req.query.dir,
+    range: req.query.range,
   });
   successPaginated(res, data.results, data.count, limit, offset, 200, req);
 });
@@ -99,6 +100,7 @@ export const listListeningGuests = asyncHandler(async (req, res) => {
     status: req.query.status,
     sort: req.query.sort,
     dir: req.query.dir,
+    range: req.query.range,
   });
   successPaginated(res, data.results, data.count, limit, offset, 200, req);
 });
@@ -111,12 +113,15 @@ export const getUserSongs = asyncHandler(async (req, res) => {
     search: req.query.search,
     sort: req.query.sort,
     dir: req.query.dir,
+    range: req.query.range,
   });
   successPaginated(res, data.results, data.count, limit, offset, 200, req);
 });
 
 export const getUserSummary = asyncHandler(async (req, res) => {
-  const summary = await getUserListeningSummary(req.params.userId);
+  const summary = await getUserListeningSummary(req.params.userId, {
+    range: req.query.range,
+  });
   if (!summary) {
     throw new AppError('User not found', 404);
   }
@@ -125,13 +130,17 @@ export const getUserSummary = asyncHandler(async (req, res) => {
 
 export const getPopularSongs = asyncHandler(async (req, res) => {
   const { limit, offset } = parsePagination(req.query);
-  const data = await getSongPopularity({ limit, offset });
+  const data = await getSongPopularity({ limit, offset, range: req.query.range });
   successPaginated(res, data.results, data.count, limit, offset, 200, req);
 });
 
 export const getSongListenerList = asyncHandler(async (req, res) => {
   const { limit, offset } = parsePagination(req.query);
-  const data = await getSongListeners(req.params.songId, { limit, offset });
+  const data = await getSongListeners(req.params.songId, {
+    limit,
+    offset,
+    range: req.query.range,
+  });
   successPaginated(res, data.results, data.count, limit, offset, 200, req);
 });
 
