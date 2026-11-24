@@ -1,13 +1,14 @@
 import { scrapeGenres, scrapeGenreSongs } from '../scrapers/genreScraper.js';
 import { success, successPaginated } from '../utils/apiResponse.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { CATALOG_CACHE_TTL, getOrSet } from '../utils/catalogCache.js';
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
 const MAX_LIMIT = 50;
 
 export const getGenres = asyncHandler(async (req, res) => {
-  const genres = await scrapeGenres();
+  const genres = await getOrSet('genres', CATALOG_CACHE_TTL.genres, scrapeGenres);
   success(res, genres);
 });
 
