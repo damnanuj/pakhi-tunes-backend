@@ -11,8 +11,6 @@ import { normalizeDeviceId } from './guestService.js';
 export const GUEST_LISTENING_LIMIT_MS = 120 * 60 * 1000;
 
 const MIN_LISTENED_MS = 1000;
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
 
 function clampListenedMs(value) {
   const parsed = Number(value);
@@ -22,15 +20,47 @@ function clampListenedMs(value) {
   return Math.floor(parsed);
 }
 
-function parsePagination({ page, limit }) {
-  const parsedLimit = Math.max(
-    1,
-    Math.min(MAX_LIMIT, parseInt(limit, 10) || DEFAULT_LIMIT)
-  );
-  const parsedPage = Math.max(1, parseInt(page, 10) || 1);
-  const offset = (parsedPage - 1) * parsedLimit;
-  return { limit: parsedLimit, page: parsedPage, offset };
+function listWindow(options = {}) {
+  const limit = Math.max(1, Number(options.limit) || 10);
+  const offset = Math.max(0, Number(options.offset) || 0);
+  return { limit, offset };
 }
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function resolveSort(sort, dir, fields, fallbackField) {
+  const known = Object.prototype.hasOwnProperty.call(fields, sort);
+  if (sort && !known) {
+    return { [fallbackField]: -1 };
+  }
+  const field = known ? fields[sort] : fallbackField;
+  return { [field]: dir === 'asc' ? 1 : -1 };
+}
+
+const USER_LIST_SORTS = {
+  listened: 'totalListenedMs',
+  plays: 'totalPlays',
+  songs: 'totalSongs',
+  lastPlayed: 'lastPlayedAt',
+  name: 'user.name',
+};
+
+const GUEST_LIST_SORTS = {
+  listened: 'totalListenedMs',
+  lastActive: 'lastActiveAt',
+  status: 'status',
+};
+
+const SONG_STAT_SORTS = {
+  listened: 'totalListenedMs',
+  plays: 'playCount',
+  lastPlayed: 'lastPlayedAt',
+  title: 'title',
+};
+
+const GUEST_LIST_STATUSES = new Set(['active', 'inactive', 'converted', 'banned']);
 
 export function normalizeListeningPayload(body = {}) {
   const songId = typeof body.songId === 'string' ? body.songId.trim() : '';
@@ -181,20 +211,25 @@ export async function getUserSongStats(userId, options = {}) {
     return {
       results: [],
       count: 0,
-      page: 1,
-      limit: parsePagination(options).limit,
     };
   }
 
-  const { limit, page, offset } = parsePagination(options);
-  const sortBy =
-    options.sortBy === 'playCount' ? { playCount: -1 } : { totalListenedMs: -1 };
+  const { limit, offset } = listWindow(options);
+  const sort = {
+    ...resolveSort(options.sort, options.dir, SONG_STAT_SORTS, 'totalListenedMs'),
+    _id: 1,
+  };
 
   const filter = { userId: new mongoose.Types.ObjectId(userId) };
+  const search = options.search?.trim();
+  if (search) {
+    const pattern = new RegExp(escapeRegex(search), 'i');
+    filter.$or = [{ title: pattern }, { artist: pattern }];
+  }
 
   const [results, count] = await Promise.all([
     UserSongStats.find(filter)
-      .sort(sortBy)
+      .sort(sort)
       .skip(offset)
       .limit(limit),
     UserSongStats.countDocuments(filter),
@@ -203,23 +238,21 @@ export async function getUserSongStats(userId, options = {}) {
   return {
     results: results.map((entry) => entry.toSafeObject()),
     count,
-    page,
-    limit,
   };
 }
 
 export async function getUserListeningSummary(userId) {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
-    return {
-      totalListenedMs: 0,
-      totalSongs: 0,
-      totalPlays: 0,
-    };
+    return null;
   }
 
-  const objectId = new mongoose.Types.ObjectId(userId);
+  const user = await User.findById(userId).select('name email avatar role').lean();
+  if (!user) {
+    return null;
+  }
+
   const [aggregate] = await UserSongStats.aggregate([
-    { $match: { userId: objectId } },
+    { $match: { userId: user._id } },
     {
       $group: {
         _id: null,
@@ -231,6 +264,13 @@ export async function getUserListeningSummary(userId) {
   ]);
 
   return {
+    user: {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar ?? null,
+      role: user.role ?? 'user',
+    },
     totalListenedMs: aggregate?.totalListenedMs ?? 0,
     totalSongs: aggregate?.totalSongs ?? 0,
     totalPlays: aggregate?.totalPlays ?? 0,
@@ -238,14 +278,15 @@ export async function getUserListeningSummary(userId) {
 }
 
 export async function listUsersWithListeningStats(options = {}) {
-  const { limit, page, offset } = parsePagination(options);
+  const { limit, offset } = listWindow(options);
   const search = options.search?.trim();
+  const pattern = search ? escapeRegex(search) : '';
 
-  const matchUsers = search
+  const matchUsers = pattern
     ? {
         $or: [
-          { 'user.name': { $regex: search, $options: 'i' } },
-          { 'user.email': { $regex: search, $options: 'i' } },
+          { 'user.name': { $regex: pattern, $options: 'i' } },
+          { 'user.email': { $regex: pattern, $options: 'i' } },
         ],
       }
     : null;
@@ -270,7 +311,12 @@ export async function listUsersWithListeningStats(options = {}) {
     },
     { $unwind: '$user' },
     ...(matchUsers ? [{ $match: matchUsers }] : []),
-    { $sort: { totalListenedMs: -1 } },
+    {
+      $sort: {
+        ...resolveSort(options.sort, options.dir, USER_LIST_SORTS, 'totalListenedMs'),
+        _id: 1,
+      },
+    },
   ];
 
   const [aggregated, countResult] = await Promise.all([
@@ -291,42 +337,71 @@ export async function listUsersWithListeningStats(options = {}) {
       lastPlayedAt: row.lastPlayedAt?.toISOString?.() ?? row.lastPlayedAt ?? null,
     })),
     count: countResult[0]?.count ?? 0,
-    page,
-    limit,
   };
 }
 
 export async function listGuestsWithListeningStats(options = {}) {
-  const { limit, page, offset } = parsePagination(options);
+  const { limit, offset } = listWindow(options);
   const search = options.search?.trim();
   const filter = { totalListenedMs: { $gt: 0 } };
 
   if (search) {
-    filter.deviceId = { $regex: search, $options: 'i' };
+    filter.deviceId = { $regex: escapeRegex(search), $options: 'i' };
   }
 
+  if (GUEST_LIST_STATUSES.has(options.status)) {
+    filter.status = options.status;
+  }
+
+  const sort = {
+    ...resolveSort(options.sort, options.dir, GUEST_LIST_SORTS, 'totalListenedMs'),
+    _id: 1,
+  };
+
   const [guests, count] = await Promise.all([
-    Guest.find(filter).sort({ totalListenedMs: -1 }).skip(offset).limit(limit),
+    Guest.find(filter).sort(sort).skip(offset).limit(limit).lean(),
     Guest.countDocuments(filter),
   ]);
 
+  const convertedIds = guests
+    .map((guest) => guest.convertedUserId)
+    .filter(Boolean);
+  const convertedUsers = convertedIds.length
+    ? await User.find({ _id: { $in: convertedIds } }).select('name email').lean()
+    : [];
+  const userMap = new Map(
+    convertedUsers.map((user) => [user._id.toString(), user])
+  );
+
   return {
-    results: guests.map((guest) => ({
-      guestId: guest._id.toString(),
-      deviceId: guest.deviceId,
-      platform: guest.platform,
-      totalListenedMs: guest.totalListenedMs ?? 0,
-      lastActiveAt: guest.lastActiveAt?.toISOString?.() ?? guest.lastActiveAt,
-      status: guest.status,
-    })),
+    results: guests.map((guest) => {
+      const convertedUserId = guest.convertedUserId?.toString?.() ?? null;
+      const converted = convertedUserId ? userMap.get(convertedUserId) : null;
+
+      return {
+        guestId: guest._id.toString(),
+        deviceId: guest.deviceId,
+        platform: guest.platform,
+        totalListenedMs: guest.totalListenedMs ?? 0,
+        lastActiveAt: guest.lastActiveAt?.toISOString?.() ?? guest.lastActiveAt,
+        status: guest.status,
+        convertedUserId,
+        convertedAt: guest.convertedAt?.toISOString?.() ?? guest.convertedAt ?? null,
+        convertedUser: converted
+          ? {
+              id: converted._id.toString(),
+              name: converted.name ?? 'Unknown user',
+              email: converted.email ?? '',
+            }
+          : null,
+      };
+    }),
     count,
-    page,
-    limit,
   };
 }
 
 export async function getSongPopularity(options = {}) {
-  const { limit, page, offset } = parsePagination(options);
+  const { limit, offset } = listWindow(options);
 
   const [results, countResult] = await Promise.all([
     UserSongStats.aggregate([
@@ -367,13 +442,11 @@ export async function getSongPopularity(options = {}) {
   return {
     results,
     count: countResult[0]?.count ?? 0,
-    page,
-    limit,
   };
 }
 
 export async function getSongListeners(songId, options = {}) {
-  const { limit, page, offset } = parsePagination(options);
+  const { limit, offset } = listWindow(options);
   const filter = { songId: String(songId).trim() };
 
   const [entries, count] = await Promise.all([
@@ -405,8 +478,6 @@ export async function getSongListeners(songId, options = {}) {
   return {
     results,
     count,
-    page,
-    limit,
   };
 }
 
