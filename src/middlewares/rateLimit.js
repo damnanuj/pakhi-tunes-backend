@@ -1,13 +1,14 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { verifyToken } from '../utils/jwt.js';
+import { SlidingWindowStore } from './slidingWindowStore.js';
 
 /**
  * Shared rate limiting built on express-rate-limit.
  *
  * - Every limiter returns the same 429 envelope the rest of the API uses:
  *   { data: null, error: { message, code: 'RATE_LIMITED' }, isSuccess: false }
- * - Each limiter owns its own MemoryStore (express-rate-limit default), so
- *   counters never leak between limits.
+ * - Each limiter owns its own SlidingWindowStore, so counters never leak
+ *   between limits and there is no fixed-window boundary burst.
  * - `methods` restricts a limiter to some HTTP verbs; other verbs pass through.
  * - Keys: authenticated user id when available, then device id from the body
  *   (presence / listening / guest ping), then client IP.
@@ -42,6 +43,14 @@ function deviceKey(req) {
   const raw = req.body?.deviceId;
   const id = typeof raw === 'string' ? raw.trim().slice(0, 128) : '';
   return id ? `device:${id}` : ipKey(req);
+}
+
+// Device token registration carries the app installation id in the body, which
+// is a better key than a carrier IP shared by many phones.
+function installationKey(req) {
+  const raw = req.body?.installationId;
+  const id = typeof raw === 'string' ? raw.trim().slice(0, 128) : '';
+  return id ? `install:${id}` : ipKey(req);
 }
 
 function userOrDeviceKey(req) {
@@ -82,6 +91,7 @@ export function createLimiter({ windowMs, limit, keyGenerator, methods, skip }) 
     windowMs,
     limit,
     keyGenerator,
+    store: new SlidingWindowStore(),
     standardHeaders: 'draft-6',
     legacyHeaders: false,
     handler: sendRateLimited,
@@ -101,12 +111,16 @@ const GLOBAL_SKIP_POST = new Set([
 ]);
 
 export const limiters = {
-  // Safety net for every route, per IP. Telemetry and discovery polling have
-  // their own limits below, so they are excluded here.
+  // Backstop for every route, per IP, meant to stop scrapers and floods, not
+  // to shape normal use. One busy user peaks around 300 requests per 5 minutes,
+  // and mobile carriers put many users behind one IP, so this allows about five
+  // heavy users at once. The per-user and per-device limits below do the fine
+  // work. Telemetry and discovery polling are excluded here.
   global: rateLimit({
     windowMs: FIVE_MINUTES,
-    limit: 600,
+    limit: 1500,
     keyGenerator: ipKey,
+    store: new SlidingWindowStore(),
     standardHeaders: 'draft-6',
     legacyHeaders: false,
     handler: sendRateLimited,
@@ -119,11 +133,13 @@ export const limiters = {
   }),
 
   // Login, register, google sign-in: brute-force protection.
+  // Register and Google sign-in. Password login uses loginLockoutGate instead.
   authCredentials: createLimiter({
     windowMs: FIFTEEN_MINUTES,
     limit: 10,
     keyGenerator: ipKey,
     methods: ['POST'],
+    skip: (req) => req.path === '/login',
   }),
   authMe: createLimiter({
     windowMs: MINUTE,
@@ -146,10 +162,11 @@ export const limiters = {
     methods: ['POST', 'PUT', 'PATCH', 'DELETE'],
   }),
 
-  // Nearby discovery polls every ~2.5s on the app, so it gets its own ceiling.
+  // Nearby discovery polls every 2.5s on the app (~24/min), so 60/min leaves
+  // 2.5x headroom for manual refreshes and screen re-entries.
   nearby: createLimiter({
     windowMs: MINUTE,
-    limit: 40,
+    limit: 60,
     keyGenerator: userKey,
     methods: ['GET'],
   }),
@@ -159,6 +176,22 @@ export const limiters = {
     keyGenerator: userKey,
     methods: ['GET'],
     skip: (req) => req.path === '/nearby',
+  }),
+  // The host sends a position update every 3s (~20/min). It has its own
+  // bucket so that steady telemetry never eats the budget for normal writes.
+  sessionPosition: createLimiter({
+    windowMs: MINUTE,
+    limit: 60,
+    keyGenerator: userKey,
+    methods: ['PATCH'],
+    skip: (req) => !/^\/[^/]+\/position$/.test(req.path),
+  }),
+  sessionsWrite: createLimiter({
+    windowMs: MINUTE,
+    limit: 60,
+    keyGenerator: userKey,
+    methods: ['POST', 'PUT', 'PATCH', 'DELETE'],
+    skip: (req) => /^\/[^/]+\/position$/.test(req.path),
   }),
 
   // Presence heartbeat and end. Real traffic is ~4/min per device.
@@ -185,19 +218,32 @@ export const limiters = {
     methods: ['POST'],
   }),
 
-  // Device token registration (anonymous or signed-in).
+  // Device token registration (anonymous or signed-in). The app registers once
+  // at launch and when the push token rotates, so 10/min per installation is
+  // generous. Keyed by installation so a shared carrier IP does not collide.
   anonDevices: createLimiter({
     windowMs: MINUTE,
-    limit: 20,
-    keyGenerator: ipKey,
+    limit: 10,
+    keyGenerator: installationKey,
     methods: ['POST', 'DELETE'],
   }),
 
   // Catalog reads hit scrapers and upstream sites, so keep them tighter.
+  // Keyed by logged-in user when a valid token is sent, otherwise by IP, so a
+  // user on a shared mobile-carrier IP does not drain everyone else's budget.
+  // The global per-IP cap above still applies as a backstop.
   catalogRead: createLimiter({
     windowMs: MINUTE,
     limit: 120,
-    keyGenerator: ipKey,
+    keyGenerator: userKey,
+    methods: ['GET'],
+  }),
+  // Short burst cap on top of the per-minute limit. The home screen sends
+  // about five catalog calls at once, so 20 per 5 seconds leaves headroom.
+  catalogBurst: createLimiter({
+    windowMs: 5_000,
+    limit: 20,
+    keyGenerator: userKey,
     methods: ['GET'],
   }),
 
@@ -208,11 +254,28 @@ export const limiters = {
     keyGenerator: ipKey,
     methods: ['GET'],
   }),
-  // Public app details, downloads and reviews.
-  appsPublic: createLimiter({
+  // Public app details (read only).
+  appsRead: createLimiter({
     windowMs: MINUTE,
     limit: 60,
     keyGenerator: ipKey,
+    methods: ['GET'],
+  }),
+  // Public writes are spam and counter-inflation targets, and a real person
+  // does each of these about once, so the limits are far lower than for reads.
+  appReviewCreate: createLimiter({
+    windowMs: FIFTEEN_MINUTES,
+    limit: 5,
+    keyGenerator: ipKey,
+    methods: ['POST'],
+    skip: (req) => !/\/reviews$/.test(req.path),
+  }),
+  appDownloadCount: createLimiter({
+    windowMs: 10 * MINUTE,
+    limit: 10,
+    keyGenerator: ipKey,
+    methods: ['POST'],
+    skip: (req) => !/\/downloads$/.test(req.path),
   }),
 
   // Admin mutations on public routers (app config, app releases).
@@ -244,16 +307,16 @@ export const routeLimits = [
   ['/history', [limiters.userRead, limiters.userWrite]],
   ['/playlists', [limiters.userRead, limiters.userWrite]],
   ['/sessions/nearby', [limiters.nearby]],
-  ['/sessions', [limiters.sessionsRead, limiters.userWrite]],
-  ['/top-artists', [limiters.catalogRead]],
-  ['/songs', [limiters.catalogRead]],
-  ['/albums', [limiters.catalogRead]],
-  ['/genres', [limiters.catalogRead]],
-  ['/new-releases', [limiters.catalogRead]],
-  ['/catalog-playlists', [limiters.catalogRead]],
+  ['/sessions', [limiters.sessionsRead, limiters.sessionPosition, limiters.sessionsWrite]],
+  ['/top-artists', [limiters.catalogBurst, limiters.catalogRead]],
+  ['/songs', [limiters.catalogBurst, limiters.catalogRead]],
+  ['/albums', [limiters.catalogBurst, limiters.catalogRead]],
+  ['/genres', [limiters.catalogBurst, limiters.catalogRead]],
+  ['/new-releases', [limiters.catalogBurst, limiters.catalogRead]],
+  ['/catalog-playlists', [limiters.catalogBurst, limiters.catalogRead]],
   ['/app-config', [limiters.publicRead, limiters.adminWrite]],
   ['/app-releases', [limiters.publicRead, limiters.adminWrite]],
-  ['/apps', [limiters.appsPublic]],
+  ['/apps', [limiters.appsRead, limiters.appReviewCreate, limiters.appDownloadCount]],
   ['/guests', [limiters.guestPing, limiters.userRead, limiters.userWrite]],
   ['/presence', [limiters.presenceTelemetry]],
   ['/listening', [limiters.listeningReport, limiters.userRead]],

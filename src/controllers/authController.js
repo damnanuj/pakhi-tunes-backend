@@ -4,6 +4,10 @@ import { AppError } from "../utils/AppError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { signToken } from "../utils/jwt.js";
 import { convertGuestToUser } from "../services/guestService.js";
+import {
+  clearAccountLockout,
+  recordLoginFailure,
+} from "../services/loginLockoutService.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -91,6 +95,7 @@ export const login = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email }).select("+passwordHash");
   if (!user) {
+    await recordLoginFailure(email, req.ip);
     throw new AppError("Invalid email or password", 401);
   }
 
@@ -103,6 +108,7 @@ export const login = asyncHandler(async (req, res) => {
 
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
+    await recordLoginFailure(email, req.ip);
     throw new AppError("Invalid email or password", 401);
   }
 
@@ -110,6 +116,7 @@ export const login = asyncHandler(async (req, res) => {
     throw new AppError("Account is suspended", 403);
   }
 
+  await clearAccountLockout(email);
   await touchLastLogin(user);
   await handleGuestConversion(req, user);
   issueAuthResponse(res, user);
